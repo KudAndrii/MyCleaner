@@ -14,7 +14,7 @@ final class CleanerModel {
         case analyzing
         case results
         case cleaning
-        case done(trashedCount: Int)
+        case done(CleanupReport)
     }
 
     var stage: Stage = .idle
@@ -66,21 +66,28 @@ final class CleanerModel {
         let selected = items.filter(\.isSelected).map(\.url)
         let appURL = app.url
 
-        let trashed = await Task.detached(priority: .userInitiated) {
-            var count = 0
+        let report = await Task.detached(priority: .userInitiated) { () -> CleanupReport in
+            var trashed = 0
+            var failures: [CleanupReport.Failure] = []
             let fm = FileManager.default
             for url in selected {
-                if (try? fm.trashItem(at: url, resultingItemURL: nil)) != nil {
-                    count += 1
+                do {
+                    try fm.trashItem(at: url, resultingItemURL: nil)
+                    trashed += 1
+                } catch {
+                    failures.append(.init(url: url, message: error.localizedDescription))
                 }
             }
-            if (try? fm.trashItem(at: appURL, resultingItemURL: nil)) != nil {
-                count += 1
+            do {
+                try fm.trashItem(at: appURL, resultingItemURL: nil)
+                trashed += 1
+            } catch {
+                failures.append(.init(url: appURL, message: error.localizedDescription))
             }
-            return count
+            return CleanupReport(trashed: trashed, failures: failures)
         }.value
 
-        stage = .done(trashedCount: trashed)
+        stage = .done(report)
     }
 
     func reset() {

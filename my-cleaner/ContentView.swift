@@ -39,8 +39,8 @@ struct ContentView: View {
             ResultsView(model: model)
         case .cleaning:
             CleaningView()
-        case .done(let count):
-            DoneView(count: count) { model.reset() }
+        case .done(let report):
+            DoneView(report: report) { model.reset() }
         }
     }
 

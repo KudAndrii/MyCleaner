@@ -28,6 +28,17 @@ nonisolated struct ScanResult: Sendable {
     let items: [RelatedItem]
 }
 
+nonisolated struct CleanupReport: Sendable, Equatable, Hashable {
+    let trashed: Int
+    let failures: [Failure]
+
+    nonisolated struct Failure: Sendable, Equatable, Hashable, Identifiable {
+        var id: URL { url }
+        let url: URL
+        let message: String
+    }
+}
+
 enum SandboxStatus {
     static var isSandboxed: Bool {
         if ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil { return true }
