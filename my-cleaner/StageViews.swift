@@ -100,21 +100,35 @@ struct DoneView: View {
     }
 
     private var fdaHint: some View {
-        Text("Most failures here are macOS privacy controls (Full Disk Access). Grant My Cleaner that permission and run the scan again.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: 480)
+        VStack(spacing: 4) {
+            Text("Most failures here are macOS privacy gates.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Text("Grant My Cleaner both Full Disk Access (covers ~/Library) and App Management (covers /Applications), then try again.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: 520)
     }
 
     private var actions: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             if !report.failures.isEmpty {
                 Button {
-                    openFullDiskAccessSettings()
+                    openSettings(pane: "Privacy_AllFiles")
                 } label: {
-                    Label("Open Full Disk Access", systemImage: "lock.shield")
-                        .padding(.horizontal, 4)
+                    Label("Full Disk Access", systemImage: "lock.shield")
+                        .padding(.horizontal, 2)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+
+                Button {
+                    openSettings(pane: "Privacy_AppBundles")
+                } label: {
+                    Label("App Management", systemImage: "app.badge.checkmark")
+                        .padding(.horizontal, 2)
                 }
                 .buttonStyle(.glass)
                 .controlSize(.large)
@@ -132,8 +146,8 @@ struct DoneView: View {
         .padding(.top, 4)
     }
 
-    private func openFullDiskAccessSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
+    private func openSettings(pane: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
         NSWorkspace.shared.open(url)
     }
 }
