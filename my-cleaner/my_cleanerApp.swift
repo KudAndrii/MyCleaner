@@ -2,8 +2,6 @@
 //  my_cleanerApp.swift
 //  my-cleaner
 //
-//  Created by Andrei Kud on 15.05.2026.
-//
 
 import SwiftUI
 
@@ -13,5 +11,7 @@ struct my_cleanerApp: App {
         WindowGroup {
             ContentView()
         }
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .defaultSize(width: 860, height: 620)
     }
 }

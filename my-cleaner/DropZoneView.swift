@@ -1,0 +1,123 @@
+//
+//  DropZoneView.swift
+//  my-cleaner
+//
+
+import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
+
+struct DropZoneView: View {
+    @Bindable var model: CleanerModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            if SandboxStatus.isSandboxed {
+                sandboxWarning
+            }
+            dropZone
+        }
+        .padding(24)
+    }
+
+    private var sandboxWarning: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("App Sandbox is enabled — scans will return nothing.")
+                    .font(.callout.weight(.semibold))
+                Text("In Xcode, open the target's Signing & Capabilities tab and remove the App Sandbox capability. The app is reading its own container right now, not your real Library folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(.orange.opacity(0.12), in: .rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+        }
+    }
+
+    private var dropZone: some View {
+        VStack(spacing: 28) {
+            Image(systemName: "tray.and.arrow.down.fill")
+                .font(.system(size: 64, weight: .light))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tint)
+                .scaleEffect(model.isHovering ? 1.12 : 1)
+                .animation(.smooth(duration: 0.25), value: model.isHovering)
+
+            VStack(spacing: 8) {
+                Text("Drop an app to clean")
+                    .font(.title.weight(.semibold))
+                Text("Drag any app onto this window. We'll find every file that belongs to it before sending everything to the Trash.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            }
+
+            Button {
+                pickApp()
+            } label: {
+                Label("Choose an app…", systemImage: "app.badge")
+                    .padding(.horizontal, 6)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.large)
+
+            if let error = model.errorMessage {
+                Text(error)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(56)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .strokeBorder(
+                    style: StrokeStyle(lineWidth: 2, dash: [10, 8])
+                )
+                .foregroundStyle(model.isHovering ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary.opacity(0.35)))
+        }
+        .glassEffect(
+            model.isHovering ? .regular.tint(.accentColor.opacity(0.25)).interactive() : .regular.interactive(),
+            in: .rect(cornerRadius: 32)
+        )
+        .scaleEffect(model.isHovering ? 1.015 : 1)
+        .animation(.smooth(duration: 0.25), value: model.isHovering)
+        .dropDestination(for: URL.self) { urls, _ in
+            handleDrop(urls)
+        } isTargeted: { hovering in
+            model.isHovering = hovering
+        }
+    }
+
+    private func handleDrop(_ urls: [URL]) -> Bool {
+        guard let appURL = urls.first(where: { $0.pathExtension.lowercased() == "app" }) else {
+            model.errorMessage = "Please drop a .app bundle."
+            return false
+        }
+        Task { await model.handleDrop(url: appURL) }
+        return true
+    }
+
+    private func pickApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Analyze"
+        if panel.runModal() == .OK, let url = panel.url {
+            Task { await model.handleDrop(url: url) }
+        }
+    }
+}
