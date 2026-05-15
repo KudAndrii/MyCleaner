@@ -60,3 +60,11 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# macOS
+.DS_Store
+
+# Local Xcode build artefacts (not covered by the upstream template)
+DerivedData/
+build/
+*.moved-aside
