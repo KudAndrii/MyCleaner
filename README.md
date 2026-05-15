@@ -14,7 +14,9 @@ one shot, along with the app bundle.
 Matching strategy:
 
 - **Bundle identifier** — exact or `<bundleID>.*` prefix, plus the
-  `group.<bundleID>` form used in App Groups.
+  `group.<bundleID>` form used in App Groups and the
+  `iCloud~<tilde-encoded-bundle-id>` form used under
+  `~/Library/Mobile Documents`.
 - **Team identifier** — read from the app's code signature via
   `SecCodeCopySigningInformation`. Used only for `~/Library/Group Containers`
   so we can surface shared bundles like Microsoft Office's
@@ -27,13 +29,37 @@ Matching strategy:
 - **Vendor descent** — for `Application Support`, `Caches`, and `Logs`, the
   scanner descends one level past non-Apple folders so it can reach things
   like `~/Library/Application Support/JetBrains/Rider2025.3/`.
+- **Spotlight pass** — after the directory walk, `mdfind` is queried for
+  files whose `kMDItemCFBundleIdentifier` matches the dropped app. Catches
+  Info.plists and helper bundles in places the walk doesn't enter (e.g.
+  `/Library/Frameworks`, vendor install dirs).
 
 ## Categories surfaced
 
 `Application Support` · `Caches` · `Preferences` (incl. `ByHost`) ·
-`Containers` · `Group Containers` · `Logs` · `Saved Application State` ·
-`Cookies & Web Data` (Cookies, HTTPStorages, WebKit) · `Launch Items` ·
-`Application Scripts`.
+`Containers` · `Group Containers` · `Logs` · `Crash Reports`
+(`DiagnosticReports`) · `Saved Application State` · `Cookies & Web Data`
+(Cookies, HTTPStorages, WebKit) · `Launch Items` · `Application Scripts` ·
+`iCloud Documents` (Mobile Documents).
+
+## Post-cleanup bookkeeping
+
+After items are sent to the Trash, MyCleaner also:
+
+- Runs `launchctl bootout` on any LaunchAgent / LaunchDaemon plist that
+  was selected, so the running job stops instead of lingering until
+  reboot.
+- Runs `killall cfprefsd` if any preference plist was selected, so the
+  in-memory cache doesn't re-sync the deleted plist to disk.
+- Runs `tccutil reset All <bundleID>` so the row in
+  **System Settings → Privacy & Security** disappears.
+
+## Orphaned files cleanup
+
+The drop zone has a second button — **Find leftovers from removed apps** —
+that scans Library directories for support files whose owning app is no
+longer installed. See [docs/ORPHAN_CLEANUP.md](docs/ORPHAN_CLEANUP.md)
+for what it looks for and how attribution works.
 
 ## Requirements
 

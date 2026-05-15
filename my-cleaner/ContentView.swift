@@ -36,6 +36,8 @@ struct ContentView: View {
         case .results: 2
         case .cleaning: 3
         case .done: 4
+        case .orphanScanning: 5
+        case .orphanResults: 6
         }
     }
 
@@ -55,6 +57,10 @@ struct ContentView: View {
             CleaningView()
         case .done(let report):
             DoneView(report: report) { model.reset() }
+        case .orphanScanning:
+            OrphanScanningView()
+        case .orphanResults:
+            OrphanResultsView(model: model)
         }
     }
 
