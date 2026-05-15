@@ -48,6 +48,7 @@ struct DoneView: View {
                 Text("\(report.trashed) \(report.trashed == 1 ? "item" : "items") moved to the Trash.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                breakdownText
             }
         } else if report.trashed > 0 {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -59,6 +60,7 @@ struct DoneView: View {
                 Text("\(report.trashed) moved · \(report.failures.count) couldn't be trashed")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                breakdownText
             }
         } else {
             Image(systemName: "xmark.octagon.fill")
@@ -71,6 +73,29 @@ struct DoneView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var breakdownText: some View {
+        let parts: [String] = {
+            var out: [String] = []
+            if report.trashedNormally > 0 {
+                out.append("\(report.trashedNormally) normally")
+            }
+            if report.trashedWithElevation > 0 {
+                out.append("\(report.trashedWithElevation) with admin password")
+            }
+            if !report.failures.isEmpty {
+                out.append("\(report.failures.count) still refused")
+            }
+            return out
+        }()
+        if parts.count >= 2 {
+            Text(parts.joined(separator: " · "))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 2)
         }
     }
 

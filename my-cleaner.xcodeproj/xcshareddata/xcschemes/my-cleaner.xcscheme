@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "5C7F62D82FB766BA00AA25F7"
-               BuildableName = "my-cleaner.app"
+               BuildableName = "MyCleaner.app"
                BlueprintName = "my-cleaner"
                ReferencedContainer = "container:my-cleaner.xcodeproj">
             </BuildableReference>
@@ -46,7 +46,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "5C7F62D82FB766BA00AA25F7"
-            BuildableName = "my-cleaner.app"
+            BuildableName = "MyCleaner.app"
             BlueprintName = "my-cleaner"
             ReferencedContainer = "container:my-cleaner.xcodeproj">
          </BuildableReference>
@@ -63,7 +63,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "5C7F62D82FB766BA00AA25F7"
-            BuildableName = "my-cleaner.app"
+            BuildableName = "MyCleaner.app"
             BlueprintName = "my-cleaner"
             ReferencedContainer = "container:my-cleaner.xcodeproj">
          </BuildableReference>

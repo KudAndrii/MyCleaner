@@ -7,6 +7,8 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var model = CleanerModel()
+    @State private var permissions = PermissionsChecker()
+    @State private var showPermissions = false
 
     var body: some View {
         ZStack {
@@ -16,6 +18,15 @@ struct ContentView: View {
         }
         .animation(.smooth(duration: 0.35), value: stageID)
         .frame(minWidth: 760, minHeight: 560)
+        .task {
+            permissions.refresh()
+            if permissions.needsAttention {
+                showPermissions = true
+            }
+        }
+        .sheet(isPresented: $showPermissions) {
+            PermissionsView(permissions: permissions, isPresented: $showPermissions)
+        }
     }
 
     private var stageID: Int {
@@ -32,7 +43,10 @@ struct ContentView: View {
     private var content: some View {
         switch model.stage {
         case .idle:
-            DropZoneView(model: model)
+            DropZoneView(model: model, permissions: permissions) {
+                permissions.refresh()
+                showPermissions = true
+            }
         case .analyzing:
             AnalyzingView(app: model.droppedApp)
         case .results:

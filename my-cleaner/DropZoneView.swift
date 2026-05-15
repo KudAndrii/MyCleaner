@@ -9,15 +9,23 @@ import UniformTypeIdentifiers
 
 struct DropZoneView: View {
     @Bindable var model: CleanerModel
+    @Bindable var permissions: PermissionsChecker
+    var onReviewPermissions: () -> Void
 
     var body: some View {
         VStack(spacing: 14) {
             if SandboxStatus.isSandboxed {
                 sandboxWarning
             }
+            if permissions.needsAttention {
+                permissionsBanner
+            }
             dropZone
         }
         .padding(24)
+        .onAppear {
+            permissions.refresh()
+        }
     }
 
     private var sandboxWarning: some View {
@@ -41,6 +49,33 @@ struct DropZoneView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
         }
+    }
+
+    private var permissionsBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.shield")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text(bannerText)
+                .font(.callout)
+            Spacer(minLength: 8)
+            Button("Review…") { onReviewPermissions() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.orange.opacity(0.10), in: .rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.30), lineWidth: 1)
+        }
+    }
+
+    private var bannerText: String {
+        let missing = PermissionKind.allCases.filter { permissions.status(for: $0) != .granted }
+        let names = missing.map(\.title).joined(separator: " · ")
+        return "Permissions needed: \(names)"
     }
 
     private var dropZone: some View {

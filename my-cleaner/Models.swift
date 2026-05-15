@@ -29,8 +29,11 @@ nonisolated struct ScanResult: Sendable {
 }
 
 nonisolated struct CleanupReport: Sendable, Equatable, Hashable {
-    let trashed: Int
+    let trashedNormally: Int
+    let trashedWithElevation: Int
     let failures: [Failure]
+
+    var trashed: Int { trashedNormally + trashedWithElevation }
 
     nonisolated struct Failure: Sendable, Equatable, Hashable, Identifiable {
         var id: URL { url }

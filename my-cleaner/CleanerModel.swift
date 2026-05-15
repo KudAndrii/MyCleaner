@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import AppKit
 
 @Observable
 final class CleanerModel {
@@ -65,29 +66,42 @@ final class CleanerModel {
         stage = .cleaning
         let selected = items.filter(\.isSelected).map(\.url)
         let appURL = app.url
+        let allURLs = selected + [appURL]
 
-        let report = await Task.detached(priority: .userInitiated) { () -> CleanupReport in
+        let firstPass = await Task.detached(priority: .userInitiated) { () -> FirstPassResult in
             var trashed = 0
-            var failures: [CleanupReport.Failure] = []
+            var failed: [URL] = []
+            var messages: [URL: String] = [:]
             let fm = FileManager.default
-            for url in selected {
+            for url in allURLs {
                 do {
                     try fm.trashItem(at: url, resultingItemURL: nil)
                     trashed += 1
                 } catch {
-                    failures.append(.init(url: url, message: error.localizedDescription))
+                    failed.append(url)
+                    messages[url] = error.localizedDescription
                 }
             }
-            do {
-                try fm.trashItem(at: appURL, resultingItemURL: nil)
-                trashed += 1
-            } catch {
-                failures.append(.init(url: appURL, message: error.localizedDescription))
-            }
-            return CleanupReport(trashed: trashed, failures: failures)
+            return FirstPassResult(trashed: trashed, failed: failed, messages: messages)
         }.value
 
-        stage = .done(report)
+        var elevatedSucceeded = 0
+        var failures: [CleanupReport.Failure] = []
+
+        if !firstPass.failed.isEmpty {
+            let elevation = await AdminTrash.move(urls: firstPass.failed)
+            elevatedSucceeded = elevation.succeeded.count
+            for url in elevation.refused {
+                let msg = elevation.errorMessage ?? firstPass.messages[url] ?? "Item could not be moved to the Trash."
+                failures.append(.init(url: url, message: msg))
+            }
+        }
+
+        stage = .done(CleanupReport(
+            trashedNormally: firstPass.trashed,
+            trashedWithElevation: elevatedSucceeded,
+            failures: failures
+        ))
     }
 
     func reset() {
@@ -98,6 +112,12 @@ final class CleanerModel {
         isHovering = false
         stage = .idle
     }
+}
+
+private struct FirstPassResult: Sendable {
+    let trashed: Int
+    let failed: [URL]
+    let messages: [URL: String]
 }
 
 private nonisolated func categoryOrder(_ c: RelatedItem.Category) -> Int {
