@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Security
 
 enum AppScanner {
 
@@ -12,6 +13,8 @@ enum AppScanner {
         let home = fm.homeDirectoryForCurrentUser
         let userLib = home.appendingPathComponent("Library", isDirectory: true)
         let sysLib = URL(fileURLWithPath: "/Library", isDirectory: true)
+        let teamID = readTeamID(forAppAt: app.url)
+        let nameHints = computeNameHints(app: app)
 
         // (directory, category, extra descent depth — 0 means top-level only)
         let locations: [(URL, RelatedItem.Category, Int)] = [
@@ -44,6 +47,8 @@ enum AppScanner {
                 directory: dir,
                 category: category,
                 app: app,
+                teamID: teamID,
+                nameHints: nameHints,
                 extraDepth: descend,
                 appPath: appPath,
                 into: &found
@@ -58,6 +63,8 @@ enum AppScanner {
         directory: URL,
         category: RelatedItem.Category,
         app: DroppedApp,
+        teamID: String?,
+        nameHints: [String],
         extraDepth: Int,
         appPath: String,
         into found: inout [URL: RelatedItem]
@@ -74,14 +81,22 @@ enum AppScanner {
             if std.path == appPath { continue }
             let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
 
-            if matches(entry: entry, app: app) {
+            let outcome = classify(
+                entry: entry,
+                app: app,
+                teamID: teamID,
+                nameHints: nameHints,
+                category: category
+            )
+            if outcome.matched {
                 if found[std] == nil {
                     let size = sizeOfItem(at: entry, isDirectory: isDir)
                     found[std] = RelatedItem(
                         url: entry,
                         category: category,
                         sizeBytes: size,
-                        isDirectory: isDir
+                        isDirectory: isDir,
+                        isShared: outcome.shared
                     )
                 }
                 continue
@@ -92,6 +107,8 @@ enum AppScanner {
                     directory: entry,
                     category: category,
                     app: app,
+                    teamID: teamID,
+                    nameHints: nameHints,
                     extraDepth: extraDepth - 1,
                     appPath: appPath,
                     into: &found
@@ -101,31 +118,69 @@ enum AppScanner {
     }
 
     private nonisolated static func shouldSkipDescent(_ url: URL) -> Bool {
-        // Avoid descending into Apple system folders or anything that already looks like a bundle ID.
         let name = url.lastPathComponent
         if name.hasPrefix("com.apple.") { return true }
         if name == "Apple" || name == "CrashReporter" { return true }
         return false
     }
 
-    nonisolated static func matches(entry: URL, app: DroppedApp) -> Bool {
+    /// Collect every short token we plausibly know the app by: display name, bundle ID's
+    /// last reverse-DNS component, and the .app filename. JetBrains stores Rider data in
+    /// `~/Library/Caches/JetBrains/Rider2025.3/`, where the folder name only matches the
+    /// `rider` token from the bundle ID — not "JetBrains Rider".
+    private nonisolated static func computeNameHints(app: DroppedApp) -> [String] {
+        var hints: Set<String> = []
+        let display = app.name.lowercased()
+        if display.count >= 3 { hints.insert(display) }
+
+        if let bid = app.bundleID,
+           let last = bid.split(separator: ".").last {
+            let token = String(last).lowercased()
+            if token.count >= 3 { hints.insert(token) }
+        }
+
+        let filename = app.url.deletingPathExtension().lastPathComponent.lowercased()
+        if filename.count >= 3 { hints.insert(filename) }
+
+        return Array(hints)
+    }
+
+    /// Decide whether `entry` belongs to `app`, and whether the match is a "shared with developer"
+    /// container (team-ID-prefixed group container) that should be off by default.
+    nonisolated static func classify(
+        entry: URL,
+        app: DroppedApp,
+        teamID: String?,
+        nameHints: [String],
+        category: RelatedItem.Category
+    ) -> (matched: Bool, shared: Bool) {
         let full = entry.lastPathComponent.lowercased()
         let base = entry.deletingPathExtension().lastPathComponent.lowercased()
 
         if let raw = app.bundleID, !raw.isEmpty {
             let bid = raw.lowercased()
-            if full == bid || base == bid { return true }
-            if full.hasPrefix(bid + ".") || base.hasPrefix(bid + ".") { return true }
-            if full == "group.\(bid)" || full.hasPrefix("group.\(bid).") { return true }
+            if full == bid || base == bid { return (true, false) }
+            if full.hasPrefix(bid + ".") || base.hasPrefix(bid + ".") { return (true, false) }
+            if full == "group.\(bid)" || full.hasPrefix("group.\(bid).") { return (true, false) }
         }
 
-        let appName = app.name.lowercased()
-        if !appName.isEmpty {
-            if base == appName || full == appName { return true }
-            if wordBoundaryPrefix(base, prefix: appName) { return true }
-            if wordBoundaryPrefix(full, prefix: appName) { return true }
+        for hint in nameHints {
+            if base == hint || full == hint { return (true, false) }
+            if wordBoundaryPrefix(base, prefix: hint) { return (true, false) }
+            if wordBoundaryPrefix(full, prefix: hint) { return (true, false) }
         }
-        return false
+
+        // Team-ID-prefixed group containers are usually shared between every app the
+        // developer ships (e.g. Microsoft Office's UBF8T346G9.Office). Surface them but
+        // default the toggle off so the user opts in.
+        if category == .groupContainers, let raw = teamID, !raw.isEmpty {
+            let tid = raw.lowercased()
+            if full.hasPrefix(tid + ".") {
+                return (true, true)
+            }
+        }
+
+        return (false, false)
     }
 
     /// Returns true if `s` starts with `prefix` and the next character is a non-letter
@@ -135,6 +190,19 @@ enum AppScanner {
         guard prefix.count >= 3, s.count > prefix.count, s.hasPrefix(prefix) else { return false }
         let next = s[s.index(s.startIndex, offsetBy: prefix.count)]
         return !next.isLetter
+    }
+
+    private nonisolated static func readTeamID(forAppAt url: URL) -> String? {
+        var staticCode: SecStaticCode?
+        let createStatus = SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode)
+        guard createStatus == errSecSuccess, let code = staticCode else { return nil }
+
+        var infoRef: CFDictionary?
+        let infoStatus = SecCodeCopySigningInformation(code, [], &infoRef)
+        guard infoStatus == errSecSuccess,
+              let info = infoRef as? [String: Any] else { return nil }
+
+        return info[kSecCodeInfoTeamIdentifier as String] as? String
     }
 
     nonisolated static func sizeOfItem(at url: URL, isDirectory: Bool) -> Int64 {

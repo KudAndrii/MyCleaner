@@ -42,7 +42,17 @@ nonisolated struct RelatedItem: Identifiable, Hashable, Sendable {
     let category: Category
     let sizeBytes: Int64
     let isDirectory: Bool
-    var isSelected: Bool = true
+    let isShared: Bool
+    var isSelected: Bool
+
+    init(url: URL, category: Category, sizeBytes: Int64, isDirectory: Bool, isShared: Bool = false) {
+        self.url = url
+        self.category = category
+        self.sizeBytes = sizeBytes
+        self.isDirectory = isDirectory
+        self.isShared = isShared
+        self.isSelected = !isShared
+    }
 
     enum Category: String, CaseIterable, Hashable, Sendable {
         case applicationSupport = "Application Support"

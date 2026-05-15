@@ -165,6 +165,12 @@ struct ResultsView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.head)
+                if item.isShared {
+                    Label("Shared with other apps from this developer", systemImage: "person.2.fill")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.orange)
+                        .padding(.top, 1)
+                }
             }
 
             Spacer(minLength: 8)
