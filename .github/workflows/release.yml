@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag for the release (e.g. v1.0.0)'
+        required: true
+        type: string
+      title:
+        description: 'Release title shown on the Releases page'
+        required: true
+        type: string
+      notes:
+        description: 'Release notes — markdown allowed, multi-line OK'
+        required: false
+        type: string
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, package, publish
+    runs-on: macos-26-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.5
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --show-sdk-version --sdk macosx
+
+      - name: Build Release (.app, ad-hoc signed)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project my-cleaner.xcodeproj \
+            -scheme my-cleaner \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            DEVELOPMENT_TEAM="" \
+            clean build
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Compute DMG filename from tag
+        id: vars
+        run: |
+          VERSION="${{ inputs.tag }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dmg=MyCleaner-$VERSION.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Create DMG
+        run: |
+          APP="build/Build/Products/Release/MyCleaner.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::Build product not found at $APP"
+            ls -la build/Build/Products/Release/ || true
+            exit 1
+          fi
+          create-dmg \
+            --volname "My Cleaner" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 128 \
+            --icon "MyCleaner.app" 175 200 \
+            --hide-extension "MyCleaner.app" \
+            --app-drop-link 425 200 \
+            "${{ steps.vars.outputs.dmg }}" \
+            "$APP"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          echo "$NOTES" > release-notes.md
+          PRERELEASE_FLAG=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "${{ inputs.tag }}" \
+            "${{ steps.vars.outputs.dmg }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ inputs.title }}" \
+            --notes-file release-notes.md \
+            $PRERELEASE_FLAG
