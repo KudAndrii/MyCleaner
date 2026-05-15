@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Donut (outer circle minus inner circle) using even-odd fill -->
+  <path fill="#FFFFFF" fill-rule="evenodd"
+        d="M 512 232
+           a 280 280 0 1 0 0.001 0 Z
+           M 512 272
+           a 240 240 0 1 1 -0.001 0 Z"/>
+</svg>

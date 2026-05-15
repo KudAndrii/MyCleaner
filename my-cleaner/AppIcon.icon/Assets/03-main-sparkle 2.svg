@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <path fill="#FFFFFF"
+        d="M 512 360
+           L 544 496
+           L 680 528
+           L 544 560
+           L 512 696
+           L 480 560
+           L 344 528
+           L 480 496 Z"/>
+</svg>

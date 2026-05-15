@@ -1,0 +1,36 @@
+{
+  "fill" : {
+    "solid" : "display-p3:0.06275,0.72549,0.50588,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "04-accent-sparkles 2.svg",
+          "name" : "04-accent-sparkles"
+        },
+        {
+          "image-name" : "03-main-sparkle 2.svg",
+          "name" : "03-main-sparkle"
+        },
+        {
+          "image-name" : "02-bubble-ring 2.svg",
+          "name" : "02-bubble-ring"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
