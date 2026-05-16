@@ -21,7 +21,7 @@ struct ResultsView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if model.items.isEmpty {
+            if model.items.isEmpty && model.systemExtensions.isEmpty {
                 emptyState
             } else {
                 list
@@ -96,6 +96,9 @@ struct ResultsView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 18, pinnedViews: []) {
+                if !model.systemExtensions.isEmpty {
+                    systemExtensionsSection
+                }
                 ForEach(grouped, id: \.0) { (cat, items) in
                     section(category: cat, items: items)
                 }
@@ -103,6 +106,72 @@ struct ResultsView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 18)
         }
+    }
+
+    private var systemExtensionsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "puzzlepiece.extension.fill")
+                    .foregroundStyle(.orange)
+                Text("System Extensions")
+                    .font(.subheadline.weight(.semibold))
+                Text("· \(model.systemExtensions.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+
+            Text("These stay loaded after the app is trashed. Removing them requires macOS's confirmation prompt.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+
+            VStack(spacing: 0) {
+                ForEach(Array(model.systemExtensions.enumerated()), id: \.element.id) { idx, ext in
+                    systemExtensionRow(ext)
+                    if idx < model.systemExtensions.count - 1 {
+                        Divider().padding(.leading, 48)
+                    }
+                }
+            }
+            .background(.background.secondary, in: .rect(cornerRadius: 14))
+        }
+    }
+
+    private func systemExtensionRow(_ ext: SystemExtensionInfo) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "puzzlepiece.extension")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ext.displayName)
+                    .font(.body)
+                    .lineLimit(1)
+                Text(ext.bundleID + (ext.version.isEmpty ? "" : " · \(ext.version)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("Team \(ext.teamID)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                Task { await model.uninstallSystemExtension(ext) }
+            } label: {
+                Text("Uninstall…")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Asks macOS to remove this extension. You'll be prompted to confirm.")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     @ViewBuilder

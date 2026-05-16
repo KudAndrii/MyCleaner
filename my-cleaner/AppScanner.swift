@@ -133,8 +133,18 @@ enum AppScanner {
         // `/Library/Application Support`). No-op for drag-installed apps.
         supplementWithPkgutilReceipts(app: app, appPath: appPath, into: &found)
 
+        // System extensions — detect-only. These live outside the
+        // `.app` bundle and stay loaded after the bundle is trashed;
+        // removal goes through a system prompt the user has to
+        // approve. Surfaced separately from the trashable items.
+        let systemExtensions = SystemExtensions.extensionsForApp(app, teamID: teamID)
+
         let appSize = sizeOfItem(at: app.url, isDirectory: true)
-        return ScanResult(appSize: appSize, items: Array(found.values))
+        return ScanResult(
+            appSize: appSize,
+            items: Array(found.values),
+            systemExtensions: systemExtensions
+        )
     }
 
     // MARK: - pkgutil supplement

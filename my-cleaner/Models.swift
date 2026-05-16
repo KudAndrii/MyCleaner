@@ -53,6 +53,21 @@ nonisolated struct ScanResult: Sendable {
 
     /// Library entries that look like they belong to the dropped app.
     let items: [RelatedItem]
+
+    /// System extensions registered by the dropped app. These can't
+    /// be moved to the Trash — removal goes through `systemextensionsctl`
+    /// or System Settings. Empty when the app didn't register any.
+    let systemExtensions: [SystemExtensionInfo]
+
+    init(
+        appSize: Int64,
+        items: [RelatedItem],
+        systemExtensions: [SystemExtensionInfo] = []
+    ) {
+        self.appSize = appSize
+        self.items = items
+        self.systemExtensions = systemExtensions
+    }
 }
 
 /// A single Library entry attributed to a dropped app (or an orphan group).
