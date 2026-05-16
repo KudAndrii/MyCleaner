@@ -296,3 +296,115 @@ struct CleanerModelResetTests {
         #expect(a == b)
     }
 }
+
+@Suite("CleanerModel — login items toggle")
+@MainActor
+struct CleanerModelLoginItemsTests {
+
+    private func makeApp() throws -> DroppedApp {
+        let dir = try TempDir(label: "login-items-app")
+        let url = try AppBundleBuilder.makeApp(
+            in: dir.url,
+            name: "Sample",
+            bundleID: "com.example.sample"
+        )
+        return try #require(DroppedApp(url: url))
+    }
+
+    private func makeItem(bundleID: String, parent: String? = nil) -> LoginItemInfo {
+        LoginItemInfo(
+            bundleID: bundleID,
+            parentBundleID: parent,
+            teamID: nil,
+            displayName: bundleID,
+            url: "",
+            isEnabled: true
+        )
+    }
+
+    @Test("Disabled by default; loginItems is empty")
+    func defaultsDisabled() {
+        let m = CleanerModel()
+        #expect(m.loginItemsEnabled == false)
+        #expect(m.loginItems.isEmpty)
+    }
+
+    @Test("Filters cache by current app when enabled")
+    func filtersByCurrentApp() throws {
+        let m = CleanerModel()
+        m.droppedApp = try makeApp()
+        m.cachedAllLoginItems = [
+            makeItem(bundleID: "com.example.sample.helper"),
+            makeItem(bundleID: "com.unrelated.helper"),
+        ]
+        m.loginItemsEnabled = true
+        #expect(m.loginItems.count == 1)
+        #expect(m.loginItems.first?.bundleID == "com.example.sample.helper")
+    }
+
+    @Test("Toggle off → loginItems empty even with populated cache")
+    func toggleOffEmpty() throws {
+        let m = CleanerModel()
+        m.droppedApp = try makeApp()
+        m.cachedAllLoginItems = [makeItem(bundleID: "com.example.sample.helper")]
+        m.loginItemsEnabled = false
+        #expect(m.loginItems.isEmpty)
+    }
+
+    @Test("No droppedApp → loginItems empty regardless of toggle")
+    func noAppEmpty() {
+        let m = CleanerModel()
+        m.cachedAllLoginItems = [makeItem(bundleID: "com.example.sample.helper")]
+        m.loginItemsEnabled = true
+        #expect(m.loginItems.isEmpty)
+    }
+
+    @Test("reset() preserves enabled flag and cache (no re-prompt on next drop)")
+    func resetPreservesLoginState() throws {
+        let m = CleanerModel()
+        m.droppedApp = try makeApp()
+        m.cachedAllLoginItems = [makeItem(bundleID: "com.example.sample.helper")]
+        m.loginItemsEnabled = true
+        m.currentTeamID = "ABCDEFGHIJ"
+
+        m.reset()
+
+        #expect(m.loginItemsEnabled == true)
+        #expect(m.cachedAllLoginItems != nil)
+        #expect(m.currentTeamID == nil) // cleared because it's per-app
+        #expect(m.droppedApp == nil)
+    }
+
+    @Test("setLoginItemsEnabled(false) flips the flag without touching cache")
+    func disableKeepsCache() async {
+        let m = CleanerModel()
+        let cached = [makeItem(bundleID: "com.example.sample.helper")]
+        m.cachedAllLoginItems = cached
+        m.loginItemsEnabled = true
+
+        await m.setLoginItemsEnabled(false)
+
+        #expect(m.loginItemsEnabled == false)
+        #expect(m.cachedAllLoginItems?.count == cached.count)
+    }
+
+    @Test("setLoginItemsEnabled(true) reuses cache without re-fetching")
+    func enableReusesCache() async throws {
+        // If the cache is already populated, enabling must NOT shell
+        // out to sfltool — verifying that here indirectly by checking
+        // that the operation completes synchronously-fast and leaves
+        // the cache intact (a real shell-out would either prompt or
+        // exit non-zero in the test environment).
+        let m = CleanerModel()
+        m.droppedApp = try makeApp()
+        let cached = [makeItem(bundleID: "com.example.sample.helper")]
+        m.cachedAllLoginItems = cached
+        m.loginItemsEnabled = false
+
+        await m.setLoginItemsEnabled(true)
+
+        #expect(m.loginItemsEnabled == true)
+        #expect(m.cachedAllLoginItems?.count == cached.count)
+        #expect(m.loginItems.count == 1)
+    }
+}

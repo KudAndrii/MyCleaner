@@ -18,7 +18,7 @@ This project is opened in Xcode and the user expects you to drive builds and tes
 - **Fast per-file diagnostics** — `XcodeRefreshCodeIssuesInFile` for live compiler errors on a single Swift file without a full build.
 - **List warnings/errors visible in Xcode** — `XcodeListNavigatorIssues` (set `severity: "warning"` to surface non-error issues).
 
-If you need shell tools, `gh` lives at `/opt/homebrew/bin/gh`. The user's shell aliases `cat` to `bat`; heredocs piped through `cat` will fail in non-interactive Bash because `bat` isn't on PATH. Write commit messages to a temp file and use `git commit -F` instead of `$(cat <<EOF…EOF)`.
+If you need shell tools, `gh` lives at `/opt/homebrew/bin/gh`. The user's shell aliases `cat` to `bat`; heredocs piped through `cat` will fail in non-interactive Bash because `bat` isn't on PATH. Avoid `$(cat <<EOF…EOF)` entirely — for commit messages and PR bodies just pass the text directly to `git commit -m "…"` (multi-line strings work fine) or `gh pr create --body "…"`. Don't write the text to a temp file as an intermediate step; that's wasted round-trips and leftover files in `/tmp`.
 
 Scheme name is `my-cleaner`. App target `my-cleaner` → `MyCleaner.app`. Test target `my-cleanerTests` → `MyCleanerTests.xctest`.
 

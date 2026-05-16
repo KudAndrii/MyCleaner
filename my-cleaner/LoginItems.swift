@@ -60,21 +60,18 @@ enum LoginItems {
 
     // MARK: Entry point
 
-    /// Login items attributable to `app`.
+    /// Every login item / background agent registered with btm.
     ///
-    /// Match strategy (see ``matches(_:bundleID:teamID:)``):
-    ///   - `app.bundleID` equals or is a prefix of the helper's
-    ///     bundle ID **or** the parent (registering) bundle ID.
-    ///   - Team-ID fallback for cases where the registration uses an
-    ///     entirely separate bundle ID under the same developer.
-    ///
-    /// Apple-namespace entries are unconditionally excluded.
-    nonisolated static func itemsForApp(
-        _ app: DroppedApp,
-        teamID: String?
-    ) -> [LoginItemInfo] {
-        let all = parseDumpOutput(dumpOutput())
-        return all.filter { matches($0, bundleID: app.bundleID, teamID: teamID) }
+    /// Returns `nil` when `sfltool` couldn't be invoked or exited
+    /// non-zero — the most common cause being the user cancelling the
+    /// admin prompt that `sfltool dumpbtm` requires. Callers should
+    /// treat `nil` as "we don't know, leave the toggle off" rather
+    /// than "no entries". Apple-namespace and per-app filtering are
+    /// the caller's job; ``matches(_:bundleID:teamID:)`` is the
+    /// canonical predicate.
+    nonisolated static func allItems() -> [LoginItemInfo]? {
+        guard let output = dumpOutput() else { return nil }
+        return parseDumpOutput(output)
     }
 
     // MARK: Attribution
@@ -199,8 +196,11 @@ enum LoginItems {
 
     // MARK: Shell-out
 
-    /// Raw output of `sfltool dumpbtm`. Empty string on any failure.
-    nonisolated static func dumpOutput() -> String {
+    /// Raw output of `sfltool dumpbtm`, or `nil` when the process
+    /// couldn't be started or exited non-zero (most often: user
+    /// cancelled the admin prompt that `sfltool` requires to read the
+    /// btm database).
+    nonisolated static func dumpOutput() -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/sfltool")
         task.arguments = ["dumpbtm"]
@@ -209,10 +209,11 @@ enum LoginItems {
         task.standardOutput = out
         task.standardError = Pipe()
 
-        do { try task.run() } catch { return "" }
+        do { try task.run() } catch { return nil }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
 
-        return String(data: data, encoding: .utf8) ?? ""
+        guard task.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }

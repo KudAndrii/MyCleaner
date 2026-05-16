@@ -46,10 +46,45 @@ final class CleanerModel {
     var appSize: Int64 = 0
     var items: [RelatedItem] = []
     var systemExtensions: [SystemExtensionInfo] = []
-    var loginItems: [LoginItemInfo] = []
     var orphanGroups: [OrphanGroup] = []
     var errorMessage: String?
     var isHovering: Bool = false
+
+    // MARK: - Login items (opt-in)
+
+    /// Whether the user has opted into reading SMAppService /
+    /// background-task-manager entries. Defaults to `false` because
+    /// `sfltool dumpbtm` requires an admin password prompt. The
+    /// preference is **session-only** — every relaunch starts off so
+    /// the user is never surprised by a credential prompt on startup.
+    var loginItemsEnabled: Bool = false
+
+    /// Snapshot of every btm entry returned by `sfltool dumpbtm` the
+    /// last time the user enabled the toggle. Cached for the lifetime
+    /// of the process so dropping a second app — or toggling off and
+    /// back on — doesn't re-prompt. `nil` until the first successful
+    /// fetch.
+    var cachedAllLoginItems: [LoginItemInfo]?
+
+    /// Team identifier of the most recently dropped app. Stored so
+    /// the login-items filter can use the team-ID fallback without
+    /// re-reading the bundle's signature.
+    var currentTeamID: String?
+
+    /// Login items attributable to the currently dropped app.
+    ///
+    /// Returns an empty array when the toggle is off, no app is
+    /// dropped, or the cache hasn't been populated yet. Filters the
+    /// cached snapshot through ``LoginItems/matches(_:bundleID:teamID:)``
+    /// so the predicate stays in one place.
+    var loginItems: [LoginItemInfo] {
+        guard loginItemsEnabled,
+              let cache = cachedAllLoginItems,
+              let app = droppedApp else { return [] }
+        return cache.filter {
+            LoginItems.matches($0, bundleID: app.bundleID, teamID: currentTeamID)
+        }
+    }
 
     // MARK: - Per-app selection (derived)
 
@@ -95,8 +130,34 @@ final class CleanerModel {
             return lhs.sizeBytes > rhs.sizeBytes
         }
         systemExtensions = result.systemExtensions
-        loginItems = result.loginItems
+        currentTeamID = result.teamID
         stage = .results
+    }
+
+    /// Flips the opt-in login-items toggle.
+    ///
+    /// Enabling for the first time runs `sfltool dumpbtm` (which
+    /// triggers the admin prompt) and caches the parsed result.
+    /// Subsequent enables — including after toggling off and back on,
+    /// or after dropping a different app — reuse the cached snapshot
+    /// without re-prompting.
+    ///
+    /// If the shell-out fails (user cancels the prompt, `sfltool`
+    /// exits non-zero), the toggle is left in the off position so the
+    /// UI accurately reflects "no data".
+    func setLoginItemsEnabled(_ enabled: Bool) async {
+        if enabled, cachedAllLoginItems == nil {
+            let fetched = await Task.detached(priority: .userInitiated) {
+                LoginItems.allItems()
+            }.value
+            guard let fetched else {
+                // Cancellation or failure — keep the toggle off.
+                loginItemsEnabled = false
+                return
+            }
+            cachedAllLoginItems = fetched
+        }
+        loginItemsEnabled = enabled
     }
 
     /// Asks macOS to uninstall a system extension via
@@ -171,11 +232,15 @@ final class CleanerModel {
         appSize = 0
         items = []
         systemExtensions = []
-        loginItems = []
+        currentTeamID = nil
         orphanGroups = []
         errorMessage = nil
         isHovering = false
         stage = .idle
+        // `loginItemsEnabled` and `cachedAllLoginItems` deliberately
+        // survive reset — once the user has paid the admin-prompt
+        // cost, we don't want to re-prompt because they dropped a
+        // second app.
     }
 
     // MARK: - Orphan selection (derived)

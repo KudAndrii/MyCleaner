@@ -139,18 +139,17 @@ enum AppScanner {
         // approve. Surfaced separately from the trashable items.
         let systemExtensions = SystemExtensions.extensionsForApp(app, teamID: teamID)
 
-        // SMAppService login items — detect-only. Registered via the
-        // modern background-task manager (no LaunchAgents plist); the
-        // OS prunes the entry once the owning app is trashed, so this
-        // surface is informational.
-        let loginItems = LoginItems.itemsForApp(app, teamID: teamID)
+        // Login items (SMAppService / btm) are deliberately NOT
+        // fetched here — reading `sfltool dumpbtm` requires admin and
+        // would prompt on every drop. The model surfaces them behind
+        // an opt-in toggle that triggers the prompt once per session.
 
         let appSize = sizeOfItem(at: app.url, isDirectory: true)
         return ScanResult(
             appSize: appSize,
             items: Array(found.values),
             systemExtensions: systemExtensions,
-            loginItems: loginItems
+            teamID: teamID
         )
     }
 

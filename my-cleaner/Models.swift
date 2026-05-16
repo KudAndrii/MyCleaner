@@ -59,21 +59,22 @@ nonisolated struct ScanResult: Sendable {
     /// or System Settings. Empty when the app didn't register any.
     let systemExtensions: [SystemExtensionInfo]
 
-    /// SMAppService-registered login items / background agents. Also
-    /// non-trashable — macOS prunes them itself once the owning app
-    /// is gone, so this surface is informational only.
-    let loginItems: [LoginItemInfo]
+    /// Code-signing team identifier of the dropped app, when one
+    /// could be read. Surfaced so downstream features (the opt-in
+    /// login-items toggle, for instance) can filter team-prefixed
+    /// data without re-reading the bundle's signature.
+    let teamID: String?
 
     init(
         appSize: Int64,
         items: [RelatedItem],
         systemExtensions: [SystemExtensionInfo] = [],
-        loginItems: [LoginItemInfo] = []
+        teamID: String? = nil
     ) {
         self.appSize = appSize
         self.items = items
         self.systemExtensions = systemExtensions
-        self.loginItems = loginItems
+        self.teamID = teamID
     }
 }
 

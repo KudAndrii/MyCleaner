@@ -21,6 +21,7 @@ struct DropZoneView: View {
                 permissionsBanner
             }
             dropZone
+            loginItemsRow
         }
         .padding(24)
         .onAppear {
@@ -144,6 +145,55 @@ struct DropZoneView: View {
         } isTargeted: { hovering in
             model.isHovering = hovering
         }
+    }
+
+    private var loginItemsRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.crop.circle.badge.clock")
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Background login items")
+                    .font(.callout.weight(.medium))
+                Text(loginItemsStateText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: loginItemsBinding)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help(model.loginItemsEnabled
+                      ? "Stop including registered login items in scan results."
+                      : "Include registered login items in scan results. macOS will prompt for an admin password (once per app launch).")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.background.secondary, in: .rect(cornerRadius: 12))
+    }
+
+    private var loginItemsStateText: String {
+        if model.loginItemsEnabled {
+            if let count = model.cachedAllLoginItems?.count {
+                return "On — \(count) registered \(count == 1 ? "item" : "items") cached"
+            }
+            return "On"
+        }
+        return "Off — admin prompt required to enable"
+    }
+
+    /// Async toggle binding — mirrors the one in `ResultsView` so the
+    /// dropzone and the results screen share a single source of truth
+    /// for the opt-in scan. Fire-and-forget Task means the visual flips
+    /// once the admin prompt resolves; cancellations leave the toggle
+    /// off.
+    private var loginItemsBinding: Binding<Bool> {
+        Binding(
+            get: { model.loginItemsEnabled },
+            set: { newValue in
+                Task { await model.setLoginItemsEnabled(newValue) }
+            }
+        )
     }
 
     private func handleDrop(_ urls: [URL]) -> Bool {

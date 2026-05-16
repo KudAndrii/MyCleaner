@@ -99,9 +99,11 @@ struct ResultsView: View {
                 if !model.systemExtensions.isEmpty {
                     systemExtensionsSection
                 }
-                if !model.loginItems.isEmpty {
-                    loginItemsSection
-                }
+                // Always rendered — the toggle is the user's entry
+                // point into the (admin-gated) login-items lookup, so
+                // it has to be visible regardless of whether we've
+                // already fetched data.
+                loginItemsSection
                 ForEach(grouped, id: \.0) { (cat, items) in
                     section(category: cat, items: items)
                 }
@@ -109,6 +111,19 @@ struct ResultsView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 18)
         }
+    }
+
+    /// Toggle binding that flips through the async `setLoginItemsEnabled`
+    /// path. SwiftUI's `Toggle` wants synchronous get/set so we fire
+    /// the change off as a Task and let the observable model drive the
+    /// visual update when the admin prompt resolves (or is cancelled).
+    private var loginItemsBinding: Binding<Bool> {
+        Binding(
+            get: { model.loginItemsEnabled },
+            set: { newValue in
+                Task { await model.setLoginItemsEnabled(newValue) }
+            }
+        )
     }
 
     private var systemExtensionsSection: some View {
@@ -149,27 +164,56 @@ struct ResultsView: View {
                     .foregroundStyle(.tint)
                 Text("Login Items (background)")
                     .font(.subheadline.weight(.semibold))
-                Text("· \(model.loginItems.count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if model.loginItemsEnabled, !model.loginItems.isEmpty {
+                    Text("· \(model.loginItems.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
+                Toggle("", isOn: loginItemsBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help(model.loginItemsEnabled
+                          ? "Hide registered login items."
+                          : "Check registered login items. macOS will prompt for an admin password (once per app launch).")
             }
             .padding(.horizontal, 8)
 
-            Text("Registered via SMAppService. macOS prunes these automatically once the app is trashed — nothing to do here, but useful to know what was running.")
+            Text(loginItemsExplainer)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
 
-            VStack(spacing: 0) {
-                ForEach(Array(model.loginItems.enumerated()), id: \.element.id) { idx, item in
-                    loginItemRow(item)
-                    if idx < model.loginItems.count - 1 {
-                        Divider().padding(.leading, 48)
+            if model.loginItemsEnabled {
+                if model.loginItems.isEmpty {
+                    Text("No registered login items match this app.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.background.secondary, in: .rect(cornerRadius: 14))
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(model.loginItems.enumerated()), id: \.element.id) { idx, item in
+                            loginItemRow(item)
+                            if idx < model.loginItems.count - 1 {
+                                Divider().padding(.leading, 48)
+                            }
+                        }
                     }
+                    .background(.background.secondary, in: .rect(cornerRadius: 14))
                 }
             }
-            .background(.background.secondary, in: .rect(cornerRadius: 14))
+        }
+    }
+
+    private var loginItemsExplainer: String {
+        if model.loginItemsEnabled {
+            return "Registered via SMAppService. macOS prunes these automatically once the app is trashed — informational only."
+        } else {
+            return "Detects background helpers registered via SMAppService. Reading them requires an admin password — toggle on to inspect."
         }
     }
 
