@@ -2,42 +2,79 @@
 //  OrphanScanner.swift
 //  my-cleaner
 //
-//  Finds Library entries whose name looks like a bundle ID (or an iCloud /
-//  group-container variant of one) and whose bundle ID no longer resolves
-//  to an installed app. These are leftover support files from apps the user
-//  removed long ago without using an uninstaller.
+//  Orphan-detection pipeline.
+//
+//  The flow mirrors ``AppScanner`` but inverts the "find vs filter"
+//  responsibilities:
+//
+//    1. **Find** — walk a fixed set of Library locations whose entries
+//       are conventionally named after a bundle ID (Containers, Group
+//       Containers, Preferences, etc.). Each on-disk name is mapped to
+//       a *candidate* bundle ID, undoing any category-specific naming
+//       quirks (`group.` prefix, iCloud tilde encoding, `.plist`
+//       suffix, ByHost UUID, …).
+//
+//    2. **Filter** — pass every candidate through the
+//       ``OrphanScanner/filters`` chain. Each ``OrphanFilter``
+//       implements one exclusion rule (Apple-reserved, installed exact
+//       / child / ancestor, vendor namespace, team prefix, Launch
+//       Services). A candidate that survives every filter is surfaced
+//       as an orphan.
 //
 
 import Foundation
 import AppKit
 
+// MARK: - Model
+
+/// A group of leftover files all attributed to the same (uninstalled) bundle ID.
 nonisolated struct OrphanGroup: Identifiable, Hashable, Sendable {
+    /// Identity is the bundle ID the group is keyed under.
     var id: String { bundleID }
+
+    /// The bundle ID we attributed every item in this group to.
     let bundleID: String
+
+    /// All the orphan items grouped under this bundle ID.
     let items: [RelatedItem]
+
+    /// Sum of every item's allocated size, in bytes.
     var totalSize: Int64 { items.map(\.sizeBytes).reduce(0, +) }
+
+    /// User-controlled toggle — true when the whole group is staged for trashing.
     var isSelected: Bool
 }
 
+/// The full orphan-scan output: every surfaced group plus an
+/// across-groups size total for the UI summary.
 nonisolated struct OrphanScanResult: Sendable {
     let groups: [OrphanGroup]
     var totalSize: Int64 { groups.flatMap(\.items).map(\.sizeBytes).reduce(0, +) }
 }
 
+// MARK: - Scanner
+
+/// Finds Library entries whose names look like a bundle ID but whose
+/// owning app no longer resolves to anything installed on disk.
+///
+/// See the file header for the two-phase find / filter pipeline.
 enum OrphanScanner {
 
-    nonisolated static func scan() -> OrphanScanResult {
+    // MARK: Locations
+
+    /// Library directories whose entries are conventionally named
+    /// after a bundle ID (or a recognisable variant).
+    ///
+    /// We deliberately **skip** name-based folders like
+    /// `Application Support/JetBrains/` — they can't be attributed to a
+    /// specific bundle ID without false positives.
+    private nonisolated static func libraryLocations() -> [(URL, RelatedItem.Category)] {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         let userLib = home.appendingPathComponent("Library", isDirectory: true)
         let sysLib = URL(fileURLWithPath: "/Library", isDirectory: true)
 
-        // (directory, category) — only places where folders are conventionally
-        // named after a bundle ID (or a recognisable variant). We deliberately
-        // skip name-based folders like `Application Support/JetBrains` because
-        // they can't be attributed to a specific bundle ID without false
-        // positives.
-        let locations: [(URL, RelatedItem.Category)] = [
+        return [
             (userLib.appendingPathComponent("Containers", isDirectory: true), .containers),
             (userLib.appendingPathComponent("Group Containers", isDirectory: true), .groupContainers),
             (userLib.appendingPathComponent("Application Scripts", isDirectory: true), .scripts),
@@ -49,20 +86,47 @@ enum OrphanScanner {
             (userLib.appendingPathComponent("Mobile Documents", isDirectory: true), .iCloud),
             (sysLib.appendingPathComponent("Preferences", isDirectory: true), .preferences),
         ]
+    }
 
+    /// The ordered filter chain that decides whether a candidate is
+    /// **excluded** from the orphan results.
+    ///
+    /// Order matters: cheap exclusions first, the disk-touching
+    /// `LaunchServicesFilter` last so it only runs on candidates that
+    /// already look genuinely orphaned. Returned as a function rather
+    /// than a `static let` so the call sites stay independent of any
+    /// global Sendable storage rules.
+    private nonisolated static func filters() -> [any OrphanFilter] {
+        [
+            AppleReservedFilter(),
+            InstalledBundleIDFilter(),
+            InstalledChildFilter(),
+            InstalledAncestorFilter(),
+            VendorNamespaceFilter(),
+            TeamPrefixFilter(),
+            LaunchServicesFilter(),
+        ]
+    }
+
+    // MARK: Entry point
+
+    /// Runs a full orphan scan over every ``libraryLocations()`` entry.
+    ///
+    /// Empty groups (every item is a 0-byte placeholder) are dropped
+    /// to keep the results list free of pure-UI noise. Surviving
+    /// groups are returned sorted by total size, largest first.
+    nonisolated static func scan() -> OrphanScanResult {
         var byBundleID: [String: [RelatedItem]] = [:]
         let installed = collectInstalledApps()
         // Pre-compute the set of "vendor namespaces" — the first two
-        // reverse-DNS segments of every installed bundle ID. Used downstream
-        // to filter sibling-namespace candidates (`com.viber.ViberPC` when
-        // `com.viber.osx` is installed, `net.whatsapp.family` when
-        // `net.whatsapp.WhatsApp` is installed, etc.). Cheaper than
-        // re-deriving it for every entry.
+        // reverse-DNS segments of every installed bundle ID. Used
+        // downstream by VendorNamespaceFilter. Cheaper than re-deriving
+        // it for every entry.
         let installedVendors: Set<String> = Set(
             installed.bundleIDs.compactMap(vendorNamespace(of:))
         )
 
-        for (dir, category) in locations {
+        for (dir, category) in libraryLocations() {
             scanDir(
                 dir,
                 category: category,
@@ -73,10 +137,6 @@ enum OrphanScanner {
             )
         }
 
-        // Skip empty-husk groups: bundles whose entries are all 0-byte
-        // placeholders (Apple system stubs like group.com.apple.CloudDocs
-        // tend to land here once the OS has cleaned out their contents).
-        // No disk recovered, so they're pure UI noise.
         let groups: [OrphanGroup] = byBundleID
             .map { OrphanGroup(bundleID: $0.key, items: $0.value, isSelected: false) }
             .filter { $0.totalSize > 0 }
@@ -85,6 +145,16 @@ enum OrphanScanner {
         return OrphanScanResult(groups: groups)
     }
 
+    // MARK: Directory walk
+
+    /// Walks a single Library directory and groups surviving candidates
+    /// by bundle ID into `byBundleID`.
+    ///
+    /// Each entry is converted to a candidate bundle ID via
+    /// ``candidateBundleID(for:category:)``; entries that don't look
+    /// like a bundle ID are silently skipped. Surviving candidates are
+    /// passed through the ``filters`` chain — any filter that hits
+    /// excludes the entry.
     nonisolated static func scanDir(
         _ dir: URL,
         category: RelatedItem.Category,
@@ -100,56 +170,20 @@ enum OrphanScanner {
             options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
         ) else { return }
 
+        let filterChain = filters()
+
         for entry in entries {
             guard let candidate = candidateBundleID(for: entry, category: category) else { continue }
-            if isAppleReserved(candidate) { continue }
-            let lower = candidate.lowercased()
-            if installedBundleIDs.contains(lower) { continue }
-            // App-group identifiers (`net.whatsapp.WhatsApp.shared`) and
-            // helper sub-bundles (`com.microsoft.teams2.agent`) are children
-            // of an installed bundle ID, separated by an extra `.<suffix>`.
-            // Treat any candidate whose prefix matches an installed bundle
-            // ID as still-installed.
-            if installedBundleIDs.contains(where: { lower.hasPrefix($0 + ".") }) {
-                continue
-            }
-            // Mirror image: some apps register a shorter ancestor bundle ID
-            // for shared resources. Docker installs `com.docker.docker` and
-            // owns a `com.docker` container in ~/Library. Treat any candidate
-            // that is a strict ancestor of an installed bundle ID as still
-            // owned by that family.
-            if installedBundleIDs.contains(where: { $0.hasPrefix(lower + ".") }) {
-                continue
-            }
-            // Sibling-namespace rule: when the candidate's first two
-            // reverse-DNS segments match an installed app's vendor namespace
-            // (`com.viber.*`, `net.whatsapp.*`), treat the candidate as part
-            // of that vendor's app family. Filters siblings like
-            // `com.viber.ViberPC` when `com.viber.osx` is installed, or
-            // `net.whatsapp.family` when `net.whatsapp.WhatsApp` is. Cost:
-            // a genuinely uninstalled sibling from a vendor whose other apps
-            // remain installed (e.g. an old Microsoft product container)
-            // won't surface here — that's an accepted recall trade-off for
-            // a destructive operation.
-            if let vendor = vendorNamespace(of: lower),
-               installedVendors.contains(vendor) {
-                continue
-            }
-            // Team-prefixed group containers (`UBF8T346G9.Office`) and the
-            // matching Application Scripts entries belong to a developer, not
-            // a single app. If *any* app from that team is still installed,
-            // don't surface them.
-            if (category == .groupContainers || category == .scripts),
-               let teamID = teamIDPrefix(of: candidate),
-               installedTeamIDs.contains(teamID) {
-                continue
-            }
-            // Backstop: the directory walk only knows about /Applications and
-            // ~/Applications. If Launch Services can resolve the bundle ID to
-            // a real .app anywhere on disk (Setapp, /opt, nested vendor dirs,
-            // a mounted DMG), bail out — the app probably is still installed
-            // and these aren't orphans.
-            if launchServicesKnows(bundleID: candidate) { continue }
+
+            let context = OrphanFilterContext(
+                candidateBundleID: candidate,
+                candidateBundleIDLower: candidate.lowercased(),
+                category: category,
+                installedBundleIDs: installedBundleIDs,
+                installedTeamIDs: installedTeamIDs,
+                installedVendors: installedVendors
+            )
+            if filterChain.contains(where: { $0.shouldExclude(context) }) { continue }
 
             let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             let size = AppScanner.sizeOfItem(at: entry, isDirectory: isDir)
@@ -168,10 +202,16 @@ enum OrphanScanner {
         }
     }
 
-    // Extract the bundle ID a directory entry was named after, undoing the
-    // category-specific naming convention (group prefix, iCloud tilde-encoded
-    // form, .plist / .savedState / .binarycookies suffix). Returns nil for
-    // entries that don't look like a bundle ID at all.
+    // MARK: Candidate extraction
+
+    /// Extracts the bundle ID a directory entry was named after, undoing
+    /// the category-specific naming convention.
+    ///
+    /// Handles `group.` / `vgroup.` prefixes, iCloud tilde-encoding,
+    /// `.plist` / `.savedState` / `.binarycookies` suffixes, and
+    /// ByHost UUID tails.
+    ///
+    /// - Returns: `nil` for entries that don't look like a bundle ID at all.
     nonisolated static func candidateBundleID(
         for url: URL,
         category: RelatedItem.Category
@@ -202,8 +242,9 @@ enum OrphanScanner {
                 let bid = String(name.dropFirst(prefix.count))
                 return looksLikeBundleID(bid) ? bid : nil
             }
-            // `UBF8T346G9.Office` — team-prefix group container. We keep the
-            // full string as the "bundle ID" key so attribution still works.
+            // `UBF8T346G9.Office` — team-prefix group container. We keep
+            // the full string as the "bundle ID" key so attribution
+            // still works.
             return looksLikeBundleID(name) ? name : nil
         }
 
@@ -212,6 +253,8 @@ enum OrphanScanner {
         return looksLikeBundleID(stripped) ? stripped : nil
     }
 
+    /// Strips `.savedState` / `.binarycookies` suffixes, leaving the bundle ID.
+    /// Returns the input unchanged when no known suffix matches.
     nonisolated static func stripKnownSuffix(_ name: String) -> String {
         let suffixes = [".savedState", ".binarycookies"]
         for suffix in suffixes where name.hasSuffix(suffix) {
@@ -220,11 +263,14 @@ enum OrphanScanner {
         return name
     }
 
+    /// Cheap structural sanity check that a string plausibly is a bundle ID.
+    ///
+    /// Requires at least one dot, no path separators or spaces, no
+    /// leading/trailing dot, and every component non-empty. The first
+    /// segment additionally has to be ≥ 2 characters and start with a
+    /// letter so things like `"0.5"` or `".cache"` aren't mistaken
+    /// for bundle IDs.
     nonisolated static func looksLikeBundleID(_ s: String) -> Bool {
-        // Must have at least one dot, no path separators, no spaces, and
-        // each component non-empty. The first segment must look like a
-        // reverse-DNS root (≥ 2 chars, starts with a letter) so we don't
-        // mistake things like "0.5" or ".cache" for a bundle ID.
         guard s.contains("."),
               !s.contains("/"),
               !s.contains(" "),
@@ -238,22 +284,12 @@ enum OrphanScanner {
         return true
     }
 
-    // Ask Launch Services whether the bundle ID still resolves to an
-    // installed .app. This catches apps in non-standard install locations
-    // (Setapp, /opt, deeply nested vendor folders) that the directory walk
-    // can't reach. It's deliberately the secondary check: LS is lenient and
-    // can remember bundles from old DMGs, but for a bundle whose folder
-    // looks orphaned, an LS hit is strong evidence the app is actually
-    // installed somewhere we just didn't look.
-    private nonisolated static func launchServicesKnows(bundleID: String) -> Bool {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            return false
-        }
-        return FileManager.default.fileExists(atPath: url.path)
-    }
-
+    /// Removes a trailing `.XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` UUID
+    /// from a ByHost plist basename, leaving the bundle ID.
+    ///
+    /// Returns the input unchanged when the tail isn't a UUID-shaped
+    /// 36-character segment with exactly four dashes.
     nonisolated static func stripByHostUUID(_ base: String) -> String {
-        // `<bundleID>.XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` → `<bundleID>`.
         let parts = base.split(separator: ".")
         guard let last = parts.last,
               last.count == 36,
@@ -261,8 +297,12 @@ enum OrphanScanner {
         return parts.dropLast().joined(separator: ".")
     }
 
+    /// Extracts a 10-character uppercase alphanumeric Apple team ID
+    /// from the front of a string like `UBF8T346G9.Office`.
+    ///
+    /// Returns `nil` if there's no dot, or the prefix isn't exactly 10
+    /// uppercase ASCII alphanumerics.
     nonisolated static func teamIDPrefix(of s: String) -> String? {
-        // Apple team IDs are 10 uppercase alphanumerics.
         guard let dot = s.firstIndex(of: ".") else { return nil }
         let head = String(s[..<dot])
         guard head.count == 10,
@@ -270,16 +310,18 @@ enum OrphanScanner {
         return head
     }
 
-    // The first two reverse-DNS segments of a bundle ID — e.g.
-    // `com.docker.docker` → `com.docker`, `net.whatsapp.WhatsApp` →
-    // `net.whatsapp`. Returns nil for IDs with fewer than two segments,
-    // which are too generic to use as a "vendor" key.
+    /// First two reverse-DNS segments of a bundle ID — the "vendor".
+    ///
+    /// `com.docker.docker` → `com.docker`, `net.whatsapp.WhatsApp` →
+    /// `net.whatsapp`. Returns `nil` for IDs with fewer than two
+    /// segments, which are too generic to use as a vendor key.
     nonisolated static func vendorNamespace(of bid: String) -> String? {
         let parts = bid.lowercased().split(separator: ".")
         guard parts.count >= 2 else { return nil }
         return parts.prefix(2).joined(separator: ".")
     }
 
+    /// `true` for bundle IDs in Apple's reserved namespace.
     nonisolated static func isAppleReserved(_ bid: String) -> Bool {
         let lower = bid.lowercased()
         if lower.hasPrefix("com.apple.") { return true }
@@ -287,20 +329,23 @@ enum OrphanScanner {
         return false
     }
 
-    // Build the "still installed" set from two sources:
-    //
-    //   1. A directory walk of /Applications and ~/Applications (depth ≤ 1).
-    //      Fast, cheap, and reliably picks up the common case.
-    //
-    //   2. A Spotlight query for every `.app` bundle on disk. This catches
-    //      installs the walk can't see — Setapp under /Applications/Setapp,
-    //      Autodesk Fusion buried deep in
-    //      ~/Library/Application Support/Autodesk/webdeploy/<hash>/, things
-    //      under /opt, /usr/local, or external volumes the user has open.
-    //
-    // Both sources contribute bundle IDs; team IDs come from a code-sign
-    // read on every collected .app so the team-prefix Group Container check
-    // works for apps reached only via Spotlight too.
+    // MARK: Installed-app inventory
+
+    /// Builds the "still installed" set from two complementary sources.
+    ///
+    /// 1. A bounded directory walk of `/Applications` and
+    ///    `~/Applications` (depth ≤ 1). Fast, cheap, and reliably
+    ///    picks up the common case.
+    ///
+    /// 2. A Spotlight query for every `.app` bundle on disk. Catches
+    ///    installs the walk can't see — Setapp under
+    ///    `/Applications/Setapp`, Autodesk Fusion buried deep in
+    ///    `~/Library/Application Support/Autodesk/webdeploy/<hash>/`,
+    ///    apps under `/opt`, `/usr/local`, or external volumes.
+    ///
+    /// Both sources contribute bundle IDs. Team IDs come from a code-sign
+    /// read on every collected `.app` so the team-prefix Group Container
+    /// check also works for apps reached only via Spotlight.
     private nonisolated static func collectInstalledApps() -> (bundleIDs: Set<String>, teamIDs: Set<String>) {
         let fm = FileManager.default
         let roots: [URL] = [
