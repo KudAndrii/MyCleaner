@@ -32,6 +32,7 @@ struct OrphanScanningView: View {
 
 struct OrphanResultsView: View {
     @Bindable var model: CleanerModel
+    @State private var showConfirm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,6 +45,30 @@ struct OrphanResultsView: View {
             }
             Divider()
             footer
+        }
+        .alert("Move \(model.orphanSelectedCount) \(model.orphanSelectedCount == 1 ? "item" : "items") to the Trash?",
+               isPresented: $showConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Move to Trash", role: .destructive) {
+                Task { await model.confirmOrphanCleanup() }
+            }
+        } message: {
+            Text(confirmMessage)
+        }
+    }
+
+    private var confirmMessage: String {
+        let size = byteCountString(model.orphanSelectedSize)
+        var lines = ["\(size) across \(selectedGroupCount) bundle \(selectedGroupCount == 1 ? "ID" : "IDs") will be moved to your Trash."]
+        if hasICloudSelection {
+            lines.append("⚠︎ Some items live in iCloud Drive (Mobile Documents). Deleting them locally may also remove them from your other devices.")
+        }
+        return lines.joined(separator: "\n\n")
+    }
+
+    private var hasICloudSelection: Bool {
+        model.orphanGroups.contains { group in
+            group.isSelected && group.items.contains { $0.category == .iCloud }
         }
     }
 
@@ -106,6 +131,8 @@ struct OrphanResultsView: View {
             set: { _ in model.toggleOrphanGroup(id: group.id) }
         )
 
+        let containsICloud = group.items.contains { $0.category == .iCloud }
+
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 Toggle("", isOn: binding)
@@ -121,6 +148,11 @@ struct OrphanResultsView: View {
                     Text("\(group.items.count) \(group.items.count == 1 ? "item" : "items")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if containsICloud {
+                        Label("Includes iCloud Drive documents", systemImage: "icloud.fill")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 Spacer(minLength: 8)
@@ -130,6 +162,10 @@ struct OrphanResultsView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
+            // Only the header toggles the group; clicks on the item list
+            // below stay free for the per-row reveal-in-Finder button.
+            .contentShape(.rect)
+            .onTapGesture { model.toggleOrphanGroup(id: group.id) }
 
             VStack(spacing: 0) {
                 ForEach(Array(group.items.enumerated()), id: \.element.id) { idx, item in
@@ -144,8 +180,6 @@ struct OrphanResultsView: View {
         }
         .padding(14)
         .background(.background.secondary, in: .rect(cornerRadius: 14))
-        .contentShape(.rect)
-        .onTapGesture { model.toggleOrphanGroup(id: group.id) }
     }
 
     private func itemRow(_ item: RelatedItem) -> some View {
@@ -212,7 +246,7 @@ struct OrphanResultsView: View {
             }
 
             Button(role: .destructive) {
-                Task { await model.confirmOrphanCleanup() }
+                showConfirm = true
             } label: {
                 Label("Move to Trash", systemImage: "trash.fill")
                     .padding(.horizontal, 4)

@@ -99,12 +99,16 @@ enum AppScanner {
             let isDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             let size = sizeOfItem(at: std, isDirectory: isDir)
             let category = categorize(path: path)
+            // iCloud entries hold user documents synced via iCloud Drive;
+            // deleting them locally can also remove them on other devices.
+            // Force opt-in regardless of how the entry was matched.
+            let shared = category == .iCloud
             found[std] = RelatedItem(
                 url: std,
                 category: category,
                 sizeBytes: size,
                 isDirectory: isDir,
-                isShared: false
+                isShared: shared
             )
         }
     }
@@ -163,12 +167,15 @@ enum AppScanner {
             if outcome.matched {
                 if found[std] == nil {
                     let size = sizeOfItem(at: entry, isDirectory: isDir)
+                    // iCloud Documents hold real user files that sync to other
+                    // devices — require explicit opt-in instead of defaulting on.
+                    let shared = outcome.shared || category == .iCloud
                     found[std] = RelatedItem(
                         url: entry,
                         category: category,
                         sizeBytes: size,
                         isDirectory: isDir,
-                        isShared: outcome.shared
+                        isShared: shared
                     )
                 }
                 continue
@@ -278,8 +285,17 @@ enum AppScanner {
         let createStatus = SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode)
         guard createStatus == errSecSuccess, let code = staticCode else { return nil }
 
+        // kSecCodeInfoTeamIdentifier lives in the cryptographic-signing
+        // section of the info dict, so it's only populated when we ask for
+        // it explicitly. Passing default flags here returns only the basic
+        // identifier set and leaves the team ID out — which made the
+        // installedTeamIDs cross-check a silent no-op.
         var infoRef: CFDictionary?
-        let infoStatus = SecCodeCopySigningInformation(code, [], &infoRef)
+        let infoStatus = SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &infoRef
+        )
         guard infoStatus == errSecSuccess,
               let info = infoRef as? [String: Any] else { return nil }
 

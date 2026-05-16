@@ -32,11 +32,17 @@ An entry is flagged as orphaned when **all** of the following are true:
    variant (`group.com.example.Foo`, `iCloud~com~example~Foo`, a ByHost
    plist `com.example.Foo.<UUID>.plist`, a team-prefix group container
    `UBF8T346G9.Office`).
-2. The bundle ID does **not** resolve to any installed application via
-   Launch Services (`NSWorkspace.urlForApplication(withBundleIdentifier:)`).
-3. The bundle ID is not in Apple's reserved namespace (`com.apple.*`,
+2. The bundle ID does **not** match any `.app` found by walking
+   `/Applications` and `~/Applications` (one level of vendor-subfolder
+   recursion) and reading each bundle's `Info.plist`.
+3. As a backstop, Launch Services
+   (`NSWorkspace.shared.urlForApplication(withBundleIdentifier:)`) also
+   does not resolve the bundle ID to an `.app` that still exists on disk.
+   This catches apps installed in non-standard locations the walk misses
+   (Setapp, `/opt`, deeply nested vendor folders).
+4. The bundle ID is not in Apple's reserved namespace (`com.apple.*`,
    `apple.*`).
-4. For team-prefix group containers, no app from that team identifier is
+5. For team-prefix group containers, no app from that team identifier is
    still installed in `/Applications` or `~/Applications`.
 
 ## Scope of the scan
@@ -87,14 +93,25 @@ category-specific naming convention:
 - **iCloud (`Mobile Documents`)**: require `iCloud~` prefix, then convert
   tildes back to dots.
 
-The candidate must contain at least one dot and no spaces or slashes.
-Anything else is silently skipped.
+The candidate must contain at least one dot and no spaces or slashes,
+and its first segment must be a ≥ 2-character reverse-DNS root that
+starts with a letter — that prevents fragments like `0.5` or `.cache`
+from being mistaken for bundle IDs. Anything else is silently skipped.
 
-Then `NSWorkspace.urlForApplication(withBundleIdentifier:)` decides
-whether the bundle ID is still installed. Launch Services knows about
-every registered app — `/Applications`, `~/Applications`, and bundles
-that have been mounted from DMGs. If it returns `nil`, the entry is
-orphaned.
+Two checks then decide whether the bundle ID is still installed:
+
+1. **Primary** — read every `.app/Contents/Info.plist` under
+   `/Applications` and `~/Applications` (depth ≤ 1) and collect bundle
+   IDs + Team IDs. This is intentionally narrower than Launch Services,
+   which remembers bundles it has merely seen (mounted DMGs, downloads
+   in quarantine).
+2. **Backstop** — for the remaining candidates, ask
+   `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)`. If LS
+   resolves it to an `.app` that still exists on disk, the entry is
+   treated as installed. Used purely as a "don't surface this" filter to
+   avoid false positives for apps in non-standard locations.
+
+Only if both checks come up empty is the entry flagged as orphaned.
 
 ## Why bundle ID, not name
 
@@ -130,6 +147,13 @@ A few things by design:
   scope of a trash-only cleaner.
 - **Installer receipts** (`pkgutil`). These are tracked separately from
   user-data files; a follow-up release may surface them.
+- **Homebrew formula prefs / CLI-tool plists** that happen to live in
+  `~/Library/Preferences`. With no `.app` anywhere, they will always
+  look orphaned to this scanner; if you keep brew formulae, leave those
+  groups unchecked.
+- **Apps installed at non-`/Applications` paths the LS backstop can't
+  reach** — extremely unusual placements (custom mount points, removable
+  volumes) may still produce false orphan reports.
 
 ## Implementation reference
 
@@ -151,7 +175,14 @@ The scanner is implemented in:
 - Selection defaults to **off**. The user has to opt in to each bundle
   ID. There's no "select all and clean" shortcut path; you click
   **Select all** before **Move to Trash**.
+- A final confirmation alert summarises the byte total and group count
+  before anything moves. Groups that include iCloud Drive documents are
+  called out explicitly in that alert.
 - Apple-namespace bundle IDs are excluded unconditionally, even if
   they're somehow not resolvable.
 - System-protected paths (`/System`, `/private`) are not scanned and
   can't be reached from this UI.
+- iCloud Drive containers under `~/Library/Mobile Documents/iCloud~…`
+  hold real user documents that sync to other devices. They are surfaced
+  with a distinct visual cue and the surrounding group's confirmation
+  alert warns that local deletion may also delete from iCloud.
