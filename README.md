@@ -58,8 +58,10 @@ After items are sent to the Trash, MyCleaner also:
 
 The drop zone has a second button — **Find leftovers from removed apps** —
 that scans Library directories for support files whose owning app is no
-longer installed. See [docs/ORPHAN_CLEANUP.md](docs/ORPHAN_CLEANUP.md)
-for what it looks for and how attribution works.
+longer installed. Attribution is by bundle ID only (no name-based
+heuristics) and the scan is backstopped by a Launch Services lookup so
+apps installed outside `/Applications` (Setapp, `/opt`, mounted DMGs)
+aren't mistaken for orphans.
 
 ## Requirements
 
