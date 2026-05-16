@@ -45,6 +45,7 @@ final class CleanerModel {
     var droppedApp: DroppedApp?
     var appSize: Int64 = 0
     var items: [RelatedItem] = []
+    var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
     var errorMessage: String?
     var isHovering: Bool = false
@@ -92,7 +93,28 @@ final class CleanerModel {
             }
             return lhs.sizeBytes > rhs.sizeBytes
         }
+        systemExtensions = result.systemExtensions
         stage = .results
+    }
+
+    /// Asks macOS to uninstall a system extension via
+    /// `systemextensionsctl uninstall`. The OS shows its own
+    /// confirmation prompt; this method returns once the command
+    /// exits, regardless of whether the user approved removal.
+    ///
+    /// Removes the entry from ``systemExtensions`` on success so the
+    /// UI updates without re-scanning. Failures leave the row in
+    /// place; callers can prompt the user to remove it via System
+    /// Settings instead.
+    @discardableResult
+    func uninstallSystemExtension(_ ext: SystemExtensionInfo) async -> Bool {
+        let ok = await Task.detached(priority: .userInitiated) {
+            SystemExtensions.uninstall(ext)
+        }.value
+        if ok {
+            systemExtensions.removeAll { $0.id == ext.id }
+        }
+        return ok
     }
 
     /// Flips every item to/from selected based on whether anything is currently unselected.
@@ -146,6 +168,7 @@ final class CleanerModel {
         droppedApp = nil
         appSize = 0
         items = []
+        systemExtensions = []
         orphanGroups = []
         errorMessage = nil
         isHovering = false
