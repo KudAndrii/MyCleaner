@@ -235,10 +235,11 @@ enum OrphanScanner {
 
         if category == .groupContainers {
             // Case-insensitive strip of the conventional group prefixes.
-            // Apple's standard form is `group.<bid>`; we've also seen
-            // vendor variants like `vgroup.<bid>` in the wild (Viber).
+            // Apple's standard form is `group.<bid>`; `systemgroup.<bid>`
+            // is the system-owned variant (e.g. searchpartyd, nsurlsessiond);
+            // we've also seen vendor variants like `vgroup.<bid>` in the wild (Viber).
             let lowered = name.lowercased()
-            for prefix in ["group.", "vgroup."] where lowered.hasPrefix(prefix) {
+            for prefix in ["systemgroup.", "group.", "vgroup."] where lowered.hasPrefix(prefix) {
                 let bid = String(name.dropFirst(prefix.count))
                 return looksLikeBundleID(bid) ? bid : nil
             }
@@ -322,10 +323,18 @@ enum OrphanScanner {
     }
 
     /// `true` for bundle IDs in Apple's reserved namespace.
+    ///
+    /// Covers `com.apple.*` / `apple.*` plus Apple-owned non-`com.apple`
+    /// namespaces: `org.cups.*` (CUPS, owned by Apple since 2007) and
+    /// `is.workflow.*` (Shortcuts, inherited from the Workflow acquisition).
+    /// Without those, system bundles like `org.cups.PrintingPrefs` and
+    /// `is.workflow.shortcuts` slip past the orphan filter.
     nonisolated static func isAppleReserved(_ bid: String) -> Bool {
         let lower = bid.lowercased()
         if lower.hasPrefix("com.apple.") { return true }
         if lower == "apple" || lower.hasPrefix("apple.") { return true }
+        if lower == "org.cups" || lower.hasPrefix("org.cups.") { return true }
+        if lower == "is.workflow" || lower.hasPrefix("is.workflow.") { return true }
         return false
     }
 

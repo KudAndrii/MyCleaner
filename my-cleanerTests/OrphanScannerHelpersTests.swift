@@ -139,6 +139,15 @@ struct CandidateBundleIDTests {
         #expect(result == "com.viber.foo")
     }
 
+    @Test("systemgroup. prefix strip (system-owned variant)")
+    func systemgroupPrefix() {
+        let result = OrphanScanner.candidateBundleID(
+            for: url("systemgroup.com.apple.icloud.searchpartyd.sharedsettings"),
+            category: .groupContainers
+        )
+        #expect(result == "com.apple.icloud.searchpartyd.sharedsettings")
+    }
+
     @Test("Team-prefix group container is kept whole")
     func teamPrefixKeptWhole() {
         let result = OrphanScanner.candidateBundleID(
@@ -279,6 +288,12 @@ struct IsAppleReservedTests {
             "apple",
             "apple.foo",
             "COM.APPLE.SOMETHING",
+            // CUPS — Apple-owned since 2007.
+            "org.cups.printers",
+            "org.cups.PrintingPrefs",
+            // Shortcuts — inherited from the Workflow acquisition.
+            "is.workflow.shortcuts",
+            "is.workflow.my.app",
         ]
     )
     func matches(bid: String) {
@@ -291,6 +306,8 @@ struct IsAppleReservedTests {
             "com.example.foo",
             "net.whatsapp.WhatsApp",
             "com.appleseed.foo",   // accidental substring
+            "org.cupsoftea.foo",   // accidental substring on cups
+            "is.workflower.foo",   // accidental substring on workflow
         ]
     )
     func doesntMatch(bid: String) {
