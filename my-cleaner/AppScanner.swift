@@ -139,11 +139,18 @@ enum AppScanner {
         // approve. Surfaced separately from the trashable items.
         let systemExtensions = SystemExtensions.extensionsForApp(app, teamID: teamID)
 
+        // SMAppService login items — detect-only. Registered via the
+        // modern background-task manager (no LaunchAgents plist); the
+        // OS prunes the entry once the owning app is trashed, so this
+        // surface is informational.
+        let loginItems = LoginItems.itemsForApp(app, teamID: teamID)
+
         let appSize = sizeOfItem(at: app.url, isDirectory: true)
         return ScanResult(
             appSize: appSize,
             items: Array(found.values),
-            systemExtensions: systemExtensions
+            systemExtensions: systemExtensions,
+            loginItems: loginItems
         )
     }
 
