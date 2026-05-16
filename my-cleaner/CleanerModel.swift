@@ -46,6 +46,7 @@ final class CleanerModel {
     var appSize: Int64 = 0
     var items: [RelatedItem] = []
     var systemExtensions: [SystemExtensionInfo] = []
+    var loginItems: [LoginItemInfo] = []
     var orphanGroups: [OrphanGroup] = []
     var errorMessage: String?
     var isHovering: Bool = false
@@ -94,6 +95,7 @@ final class CleanerModel {
             return lhs.sizeBytes > rhs.sizeBytes
         }
         systemExtensions = result.systemExtensions
+        loginItems = result.loginItems
         stage = .results
     }
 
@@ -169,6 +171,7 @@ final class CleanerModel {
         appSize = 0
         items = []
         systemExtensions = []
+        loginItems = []
         orphanGroups = []
         errorMessage = nil
         isHovering = false

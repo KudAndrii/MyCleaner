@@ -21,7 +21,7 @@ struct ResultsView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if model.items.isEmpty && model.systemExtensions.isEmpty {
+            if model.items.isEmpty && model.systemExtensions.isEmpty && model.loginItems.isEmpty {
                 emptyState
             } else {
                 list
@@ -99,6 +99,9 @@ struct ResultsView: View {
                 if !model.systemExtensions.isEmpty {
                     systemExtensionsSection
                 }
+                if !model.loginItems.isEmpty {
+                    loginItemsSection
+                }
                 ForEach(grouped, id: \.0) { (cat, items) in
                     section(category: cat, items: items)
                 }
@@ -137,6 +140,71 @@ struct ResultsView: View {
             }
             .background(.background.secondary, in: .rect(cornerRadius: 14))
         }
+    }
+
+    private var loginItemsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.circle.badge.clock.fill")
+                    .foregroundStyle(.tint)
+                Text("Login Items (background)")
+                    .font(.subheadline.weight(.semibold))
+                Text("· \(model.loginItems.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+
+            Text("Registered via SMAppService. macOS prunes these automatically once the app is trashed — nothing to do here, but useful to know what was running.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+
+            VStack(spacing: 0) {
+                ForEach(Array(model.loginItems.enumerated()), id: \.element.id) { idx, item in
+                    loginItemRow(item)
+                    if idx < model.loginItems.count - 1 {
+                        Divider().padding(.leading, 48)
+                    }
+                }
+            }
+            .background(.background.secondary, in: .rect(cornerRadius: 14))
+        }
+    }
+
+    private func loginItemRow(_ item: LoginItemInfo) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: item.isEnabled ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(item.isEnabled ? Color.green : Color.secondary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .font(.body)
+                    .lineLimit(1)
+                Text(item.bundleID)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !item.url.isEmpty {
+                    Text(item.url)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(item.isEnabled ? "Enabled" : "Disabled")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     private func systemExtensionRow(_ ext: SystemExtensionInfo) -> some View {
