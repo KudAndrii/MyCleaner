@@ -53,7 +53,7 @@ nonisolated struct OrphanFilterContext: Sendable {
 /// expensive ones (Launch Services) only see the survivors.
 protocol OrphanFilter: Sendable {
     /// - Returns: `true` if the candidate should be **excluded** from orphan results.
-    func shouldExclude(_ context: OrphanFilterContext) -> Bool
+    nonisolated func shouldExclude(_ context: OrphanFilterContext) -> Bool
 }
 
 // MARK: - Concrete filters

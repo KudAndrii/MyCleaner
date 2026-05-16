@@ -82,7 +82,7 @@ protocol AppEntryMatcher: Sendable {
     ///   - context: Pre-computed attribution hints for this entry.
     /// - Returns: `nil` when this matcher doesn't recognise the entry, otherwise
     ///   an ``AppEntryMatch`` describing how to surface it.
-    func match(entry: URL, in context: AppEntryMatchContext) -> AppEntryMatch?
+    nonisolated func match(entry: URL, in context: AppEntryMatchContext) -> AppEntryMatch?
 }
 
 // MARK: - Concrete matchers
