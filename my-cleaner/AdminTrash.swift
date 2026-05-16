@@ -62,7 +62,7 @@ enum AdminTrash {
         return Outcome(succeeded: succeeded, refused: refused, errorMessage: scriptError)
     }
 
-    private static func uniqueTrashDestination(for url: URL, trashDir: String) -> String {
+    static func uniqueTrashDestination(for url: URL, trashDir: String) -> String {
         let fm = FileManager.default
         let name = url.lastPathComponent
         let base = (name as NSString).deletingPathExtension
@@ -77,13 +77,13 @@ enum AdminTrash {
         return (trashDir as NSString).appendingPathComponent("\(base)-\(UUID().uuidString)\(ext.isEmpty ? "" : "." + ext)")
     }
 
-    private static func shellQuote(_ s: String) -> String {
+    static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // Wrap a shell command in an AppleScript double-quoted literal, escaping the
     // characters AppleScript treats specially inside "..." strings.
-    private static func appleScriptString(_ s: String) -> String {
+    static func appleScriptString(_ s: String) -> String {
         let escaped = s
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
