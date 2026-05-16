@@ -126,8 +126,39 @@ enum AppScanner {
         // vendor dirs).
         supplementWithSpotlight(app: app, appPath: appPath, into: &found)
 
+        // pkgutil pass — for apps shipped via a `.pkg` installer,
+        // pulls in files written outside the `.app` bundle that
+        // neither the directory walk nor Spotlight reaches (system
+        // helpers, `/usr/local` binaries, vendor-named installs under
+        // `/Library/Application Support`). No-op for drag-installed apps.
+        supplementWithPkgutilReceipts(app: app, appPath: appPath, into: &found)
+
         let appSize = sizeOfItem(at: app.url, isDirectory: true)
         return ScanResult(appSize: appSize, items: Array(found.values))
+    }
+
+    // MARK: - pkgutil supplement
+
+    private nonisolated static func supplementWithPkgutilReceipts(
+        app: DroppedApp,
+        appPath: String,
+        into found: inout [URL: RelatedItem]
+    ) {
+        let hits = PkgutilReceipts.filesForApp(app)
+        guard !hits.isEmpty else { return }
+
+        for url in hits {
+            let std = url.standardizedFileURL
+            if found[std] != nil { continue }
+            let isDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let size = sizeOfItem(at: std, isDirectory: isDir)
+            found[std] = RelatedItem(
+                url: std,
+                category: .installerFiles,
+                sizeBytes: size,
+                isDirectory: isDir
+            )
+        }
     }
 
     // MARK: - Spotlight supplement
