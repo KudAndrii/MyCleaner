@@ -97,14 +97,26 @@ struct DropZoneView: View {
                     .frame(maxWidth: 420)
             }
 
-            Button {
-                pickApp()
-            } label: {
-                Label("Choose an app…", systemImage: "app.badge")
-                    .padding(.horizontal, 6)
+            HStack(spacing: 10) {
+                Button {
+                    pickApp()
+                } label: {
+                    Label("Choose an app…", systemImage: "app.badge")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+
+                Button {
+                    Task { await model.startOrphanScan() }
+                } label: {
+                    Label("Find leftovers from removed apps", systemImage: "tray.2")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .help("Scan ~/Library for support files whose owning app is no longer installed.")
             }
-            .buttonStyle(.glass)
-            .controlSize(.large)
 
             if let error = model.errorMessage {
                 Text(error)

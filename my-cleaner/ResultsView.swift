@@ -166,7 +166,7 @@ struct ResultsView: View {
                     .lineLimit(1)
                     .truncationMode(.head)
                 if item.isShared {
-                    Label("Shared with other apps from this developer", systemImage: "person.2.fill")
+                    Label(sharedReason(for: item), systemImage: sharedSymbol(for: item))
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.orange)
                         .padding(.top, 1)
@@ -239,6 +239,19 @@ struct ResultsView: View {
 
     private func byteCountString(_ b: Int64) -> String {
         b.formatted(.byteCount(style: .file))
+    }
+
+    private func sharedReason(for item: RelatedItem) -> String {
+        switch item.category {
+        case .iCloud:
+            return "Contains documents synced via iCloud — deletion may remove them on other devices"
+        default:
+            return "Shared with other apps from this developer"
+        }
+    }
+
+    private func sharedSymbol(for item: RelatedItem) -> String {
+        item.category == .iCloud ? "icloud.fill" : "person.2.fill"
     }
 
     private func shortenedPath(_ url: URL) -> String {

@@ -25,15 +25,18 @@ enum AppScanner {
             (userLib.appendingPathComponent("Containers", isDirectory: true), .containers, 0),
             (userLib.appendingPathComponent("Group Containers", isDirectory: true), .groupContainers, 0),
             (userLib.appendingPathComponent("Logs", isDirectory: true), .logs, 1),
+            (userLib.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true), .crashReports, 0),
             (userLib.appendingPathComponent("Saved Application State", isDirectory: true), .savedState, 0),
             (userLib.appendingPathComponent("HTTPStorages", isDirectory: true), .cookies, 0),
             (userLib.appendingPathComponent("WebKit", isDirectory: true), .cookies, 0),
             (userLib.appendingPathComponent("Cookies", isDirectory: true), .cookies, 0),
             (userLib.appendingPathComponent("LaunchAgents", isDirectory: true), .launchItems, 0),
             (userLib.appendingPathComponent("Application Scripts", isDirectory: true), .scripts, 0),
+            (userLib.appendingPathComponent("Mobile Documents", isDirectory: true), .iCloud, 0),
             (sysLib.appendingPathComponent("Application Support", isDirectory: true), .applicationSupport, 1),
             (sysLib.appendingPathComponent("Caches", isDirectory: true), .caches, 1),
             (sysLib.appendingPathComponent("Preferences", isDirectory: true), .preferences, 0),
+            (sysLib.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true), .crashReports, 0),
             (sysLib.appendingPathComponent("LaunchAgents", isDirectory: true), .launchItems, 0),
             (sysLib.appendingPathComponent("LaunchDaemons", isDirectory: true), .launchItems, 0),
             (sysLib.appendingPathComponent("PrivilegedHelperTools", isDirectory: true), .launchItems, 0),
@@ -55,8 +58,81 @@ enum AppScanner {
             )
         }
 
+        // Spotlight pass — catches Info.plists, preference files, and
+        // helper bundles whose metadata carries this bundle ID even though
+        // their parent folder name doesn't match anything the walk knows
+        // to enter (e.g. files under /Library/Frameworks or vendor dirs).
+        supplementWithSpotlight(
+            app: app,
+            appPath: appPath,
+            into: &found
+        )
+
         let appSize = sizeOfItem(at: app.url, isDirectory: true)
         return ScanResult(appSize: appSize, items: Array(found.values))
+    }
+
+    private nonisolated static func supplementWithSpotlight(
+        app: DroppedApp,
+        appPath: String,
+        into found: inout [URL: RelatedItem]
+    ) {
+        guard let bid = app.bundleID, !bid.isEmpty else { return }
+        let hits = SpotlightSearch.filesForBundleID(bid)
+        guard !hits.isEmpty else { return }
+
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let userLib = home + "/Library/"
+        let sysLib = "/Library/"
+
+        for url in hits {
+            let std = url.standardizedFileURL
+            let path = std.path
+            if path == appPath { continue }
+            if path.hasPrefix(appPath + "/") { continue }
+            // Only surface library-scope hits; the goal is to add things our
+            // hand-rolled walk missed, not to surface every Spotlight match.
+            guard path.hasPrefix(userLib) || path.hasPrefix(sysLib) else { continue }
+            if found[std] != nil { continue }
+
+            let isDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let size = sizeOfItem(at: std, isDirectory: isDir)
+            let category = categorize(path: path)
+            // iCloud entries hold user documents synced via iCloud Drive;
+            // deleting them locally can also remove them on other devices.
+            // Force opt-in regardless of how the entry was matched.
+            let shared = category == .iCloud
+            found[std] = RelatedItem(
+                url: std,
+                category: category,
+                sizeBytes: size,
+                isDirectory: isDir,
+                isShared: shared
+            )
+        }
+    }
+
+    private nonisolated static func categorize(path: String) -> RelatedItem.Category {
+        // Cheap path-segment classifier so Spotlight results land under the
+        // right header in the results list.
+        if path.contains("/Application Support/") { return .applicationSupport }
+        if path.contains("/Caches/") { return .caches }
+        if path.contains("/Containers/") { return .containers }
+        if path.contains("/Group Containers/") { return .groupContainers }
+        if path.contains("/Preferences/") { return .preferences }
+        if path.contains("/Saved Application State/") { return .savedState }
+        if path.contains("/Logs/DiagnosticReports/") { return .crashReports }
+        if path.contains("/Logs/") { return .logs }
+        if path.contains("/HTTPStorages/") || path.contains("/WebKit/") || path.contains("/Cookies/") {
+            return .cookies
+        }
+        if path.contains("/LaunchAgents/") || path.contains("/LaunchDaemons/") || path.contains("/PrivilegedHelperTools/") {
+            return .launchItems
+        }
+        if path.contains("/Application Scripts/") { return .scripts }
+        if path.contains("/Mobile Documents/") { return .iCloud }
+        return .other
     }
 
     private nonisolated static func scan(
@@ -91,12 +167,15 @@ enum AppScanner {
             if outcome.matched {
                 if found[std] == nil {
                     let size = sizeOfItem(at: entry, isDirectory: isDir)
+                    // iCloud Documents hold real user files that sync to other
+                    // devices — require explicit opt-in instead of defaulting on.
+                    let shared = outcome.shared || category == .iCloud
                     found[std] = RelatedItem(
                         url: entry,
                         category: category,
                         sizeBytes: size,
                         isDirectory: isDir,
-                        isShared: outcome.shared
+                        isShared: shared
                     )
                 }
                 continue
@@ -162,6 +241,15 @@ enum AppScanner {
             if full == bid || base == bid { return (true, false) }
             if full.hasPrefix(bid + ".") || base.hasPrefix(bid + ".") { return (true, false) }
             if full == "group.\(bid)" || full.hasPrefix("group.\(bid).") { return (true, false) }
+            // iCloud containers under ~/Library/Mobile Documents/ are named
+            // with tildes instead of dots: `iCloud~com~apple~Pages`. The
+            // entry name was already lowercased into `full`, so match against
+            // a lowercased `icloud~` prefix.
+            if category == .iCloud {
+                let tildeBID = bid.replacingOccurrences(of: ".", with: "~")
+                if full == "icloud~\(tildeBID)" { return (true, false) }
+                if full.hasPrefix("icloud~\(tildeBID)~") { return (true, false) }
+            }
         }
 
         for hint in nameHints {
@@ -192,13 +280,22 @@ enum AppScanner {
         return !next.isLetter
     }
 
-    private nonisolated static func readTeamID(forAppAt url: URL) -> String? {
+    nonisolated static func readTeamID(forAppAt url: URL) -> String? {
         var staticCode: SecStaticCode?
         let createStatus = SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode)
         guard createStatus == errSecSuccess, let code = staticCode else { return nil }
 
+        // kSecCodeInfoTeamIdentifier lives in the cryptographic-signing
+        // section of the info dict, so it's only populated when we ask for
+        // it explicitly. Passing default flags here returns only the basic
+        // identifier set and leaves the team ID out — which made the
+        // installedTeamIDs cross-check a silent no-op.
         var infoRef: CFDictionary?
-        let infoStatus = SecCodeCopySigningInformation(code, [], &infoRef)
+        let infoStatus = SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &infoRef
+        )
         guard infoStatus == errSecSuccess,
               let info = infoRef as? [String: Any] else { return nil }
 

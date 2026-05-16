@@ -75,10 +75,12 @@ nonisolated struct RelatedItem: Identifiable, Hashable, Sendable {
         case containers = "Containers"
         case groupContainers = "Group Containers"
         case logs = "Logs"
+        case crashReports = "Crash Reports"
         case savedState = "Saved Application State"
         case cookies = "Cookies & Web Data"
         case launchItems = "Launch Items"
         case scripts = "Application Scripts"
+        case iCloud = "iCloud Documents"
         case other = "Other"
 
         var symbol: String {
@@ -89,10 +91,12 @@ nonisolated struct RelatedItem: Identifiable, Hashable, Sendable {
             case .containers: "cube.fill"
             case .groupContainers: "square.stack.3d.up.fill"
             case .logs: "doc.text.fill"
+            case .crashReports: "exclamationmark.triangle.fill"
             case .savedState: "clock.arrow.circlepath"
             case .cookies: "globe"
             case .launchItems: "play.circle.fill"
             case .scripts: "scroll.fill"
+            case .iCloud: "icloud.fill"
             case .other: "folder.fill"
             }
         }
