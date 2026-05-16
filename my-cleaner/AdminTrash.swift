@@ -6,17 +6,47 @@
 import Foundation
 import AppKit
 
+/// Elevated-privilege fallback for moving files to the Trash.
+///
+/// `FileManager.trashItem` refuses root-owned items, which means
+/// LaunchDaemon plists and helper binaries installed by a `.pkg` can't
+/// be trashed from the user session. `AdminTrash` performs a single
+/// AppleScript invocation with `do shell script … with administrator
+/// privileges` — the user is prompted for their password once, and every
+/// item in the batch is `mv`'d to `~/.Trash` from that elevated context.
 enum AdminTrash {
 
+    /// The outcome of a single elevation pass.
+    ///
+    /// `succeeded` and `refused` partition the input URLs by whether the
+    /// item is still present on disk after the script ran. If the
+    /// AppleScript itself errored (user cancelled, scripting bridge
+    /// failed), every URL is in `refused` and `errorMessage` carries a
+    /// human-readable explanation.
     struct Outcome: Sendable {
+
+        /// URLs that are no longer present on disk after the elevation
+        /// pass — i.e. the move succeeded.
         let succeeded: [URL]
+
+        /// URLs still present on disk after the elevation pass.
         let refused: [URL]
+
+        /// Localised error string from the AppleScript bridge, or `nil`
+        /// if the script ran cleanly (even if individual items refused).
         let errorMessage: String?
     }
 
-    // Single AppleScript invocation that prompts for the admin password once and
-    // moves everything in `urls` to the user's ~/.Trash. Used as a fallback when
-    // FileManager.trashItem refuses because the item is owned by root:wheel.
+    /// Move every URL in `urls` to the user's Trash through a single
+    /// password-prompted AppleScript invocation.
+    ///
+    /// Empty input short-circuits to a no-op outcome — no prompt, no
+    /// AppleScript work.
+    ///
+    /// - Parameter urls: Items to move under elevation. Order is
+    ///   preserved when building the shell pipeline.
+    /// - Returns: An `Outcome` partitioning the URLs by post-script disk
+    ///   presence, plus any bridge-level error string.
     static func move(urls: [URL]) async -> Outcome {
         guard !urls.isEmpty else {
             return Outcome(succeeded: [], refused: [], errorMessage: nil)
@@ -62,6 +92,12 @@ enum AdminTrash {
         return Outcome(succeeded: succeeded, refused: refused, errorMessage: scriptError)
     }
 
+    /// Pick a Trash destination path that doesn't collide with an
+    /// existing file.
+    ///
+    /// Matches Finder's "name 2.ext", "name 3.ext", … convention up to
+    /// 99 attempts, then falls back to a UUID suffix to guarantee a
+    /// unique target.
     private static func uniqueTrashDestination(for url: URL, trashDir: String) -> String {
         let fm = FileManager.default
         let name = url.lastPathComponent
@@ -77,12 +113,15 @@ enum AdminTrash {
         return (trashDir as NSString).appendingPathComponent("\(base)-\(UUID().uuidString)\(ext.isEmpty ? "" : "." + ext)")
     }
 
+    /// Wrap a string in single quotes for safe interpolation into a
+    /// shell command, escaping any embedded single quotes.
     private static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    // Wrap a shell command in an AppleScript double-quoted literal, escaping the
-    // characters AppleScript treats specially inside "..." strings.
+    /// Wrap a shell command in an AppleScript double-quoted literal,
+    /// escaping the characters AppleScript treats specially inside `"…"`
+    /// strings.
     private static func appleScriptString(_ s: String) -> String {
         let escaped = s
             .replacingOccurrences(of: "\\", with: "\\\\")

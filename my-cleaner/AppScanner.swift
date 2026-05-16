@@ -2,145 +2,132 @@
 //  AppScanner.swift
 //  my-cleaner
 //
+//  Finds Library entries belonging to a dropped `.app` so the cleanup
+//  step can move them to the Trash alongside the app bundle itself.
+//
+//  Two passes:
+//  1. A hand-rolled directory walk over every Library subfolder where
+//     macOS conventionally stores per-app state, classified by
+//     `AppMatcher` (bundle ID, group prefix, iCloud tilde-encoded form,
+//     name hints, team-prefix Group Containers).
+//  2. A Spotlight supplement that picks up files whose
+//     `kMDItemCFBundleIdentifier` metadata names this bundle even when
+//     the parent folder doesn't.
+//
 
 import Foundation
-import Security
 
+/// Discovers every Library entry that belongs to a dropped app.
+///
+/// Stateless and Sendable — every operation is a `nonisolated static`
+/// function the model invokes from a background `Task.detached`.
 enum AppScanner {
 
+    /// Run a complete scan for the dropped app.
+    ///
+    /// - Parameter app: The app whose leftovers MyCleaner should find.
+    /// - Returns: A `ScanResult` carrying the app bundle's own on-disk
+    ///   size plus every deduplicated leftover entry found in either
+    ///   pass.
     nonisolated static func scan(app: DroppedApp) -> ScanResult {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let userLib = home.appendingPathComponent("Library", isDirectory: true)
-        let sysLib = URL(fileURLWithPath: "/Library", isDirectory: true)
-        let teamID = readTeamID(forAppAt: app.url)
-        let nameHints = computeNameHints(app: app)
-
-        // (directory, category, extra descent depth — 0 means top-level only)
-        let locations: [(URL, RelatedItem.Category, Int)] = [
-            (userLib.appendingPathComponent("Application Support", isDirectory: true), .applicationSupport, 1),
-            (userLib.appendingPathComponent("Caches", isDirectory: true), .caches, 1),
-            (userLib.appendingPathComponent("Preferences", isDirectory: true), .preferences, 0),
-            (userLib.appendingPathComponent("Preferences/ByHost", isDirectory: true), .preferences, 0),
-            (userLib.appendingPathComponent("Containers", isDirectory: true), .containers, 0),
-            (userLib.appendingPathComponent("Group Containers", isDirectory: true), .groupContainers, 0),
-            (userLib.appendingPathComponent("Logs", isDirectory: true), .logs, 1),
-            (userLib.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true), .crashReports, 0),
-            (userLib.appendingPathComponent("Saved Application State", isDirectory: true), .savedState, 0),
-            (userLib.appendingPathComponent("HTTPStorages", isDirectory: true), .cookies, 0),
-            (userLib.appendingPathComponent("WebKit", isDirectory: true), .cookies, 0),
-            (userLib.appendingPathComponent("Cookies", isDirectory: true), .cookies, 0),
-            (userLib.appendingPathComponent("LaunchAgents", isDirectory: true), .launchItems, 0),
-            (userLib.appendingPathComponent("Application Scripts", isDirectory: true), .scripts, 0),
-            (userLib.appendingPathComponent("Mobile Documents", isDirectory: true), .iCloud, 0),
-            (sysLib.appendingPathComponent("Application Support", isDirectory: true), .applicationSupport, 1),
-            (sysLib.appendingPathComponent("Caches", isDirectory: true), .caches, 1),
-            (sysLib.appendingPathComponent("Preferences", isDirectory: true), .preferences, 0),
-            (sysLib.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true), .crashReports, 0),
-            (sysLib.appendingPathComponent("LaunchAgents", isDirectory: true), .launchItems, 0),
-            (sysLib.appendingPathComponent("LaunchDaemons", isDirectory: true), .launchItems, 0),
-            (sysLib.appendingPathComponent("PrivilegedHelperTools", isDirectory: true), .launchItems, 0),
-        ]
-
-        var found: [URL: RelatedItem] = [:]
+        let matcher = AppMatcher(app: app)
+        let locations = libraryLocations()
         let appPath = app.url.standardizedFileURL.path
 
-        for (dir, category, descend) in locations {
-            scan(
-                directory: dir,
-                category: category,
-                app: app,
-                teamID: teamID,
-                nameHints: nameHints,
-                extraDepth: descend,
+        var found: [URL: RelatedItem] = [:]
+        for location in locations {
+            walk(
+                location: location,
+                matcher: matcher,
                 appPath: appPath,
                 into: &found
             )
         }
 
-        // Spotlight pass — catches Info.plists, preference files, and
-        // helper bundles whose metadata carries this bundle ID even though
-        // their parent folder name doesn't match anything the walk knows
-        // to enter (e.g. files under /Library/Frameworks or vendor dirs).
-        supplementWithSpotlight(
-            app: app,
-            appPath: appPath,
-            into: &found
-        )
+        supplementWithSpotlight(app: app, appPath: appPath, into: &found)
 
-        let appSize = sizeOfItem(at: app.url, isDirectory: true)
+        let appSize = FileSize.of(at: app.url, isDirectory: true)
         return ScanResult(appSize: appSize, items: Array(found.values))
     }
 
-    private nonisolated static func supplementWithSpotlight(
-        app: DroppedApp,
+    /// A single Library location the scanner walks.
+    ///
+    /// `extraDepth` is the number of levels past `directory` the walker
+    /// is allowed to descend into when an immediate child doesn't match.
+    /// Used for `Application Support`, `Caches`, and `Logs`, where
+    /// vendors like JetBrains nest their per-product folders one level
+    /// deep under a brand folder.
+    private struct Location {
+        let directory: URL
+        let category: RelatedItem.Category
+        let extraDepth: Int
+    }
+
+    /// Every Library subfolder MyCleaner walks, with its category and
+    /// per-location descent depth.
+    ///
+    /// User and system Library trees both contribute, but only the
+    /// places where macOS conventionally stores per-app state are
+    /// listed — there's no point walking `~/Library/Fonts` for app
+    /// leftovers.
+    private nonisolated static func libraryLocations() -> [Location] {
+        let fm = FileManager.default
+        let userLib = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
+        let sysLib = URL(fileURLWithPath: "/Library", isDirectory: true)
+
+        return [
+            Location(directory: userLib.appendingPathComponent("Application Support", isDirectory: true), category: .applicationSupport, extraDepth: 1),
+            Location(directory: userLib.appendingPathComponent("Caches", isDirectory: true), category: .caches, extraDepth: 1),
+            Location(directory: userLib.appendingPathComponent("Preferences", isDirectory: true), category: .preferences, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Preferences/ByHost", isDirectory: true), category: .preferences, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Containers", isDirectory: true), category: .containers, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Group Containers", isDirectory: true), category: .groupContainers, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Logs", isDirectory: true), category: .logs, extraDepth: 1),
+            Location(directory: userLib.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true), category: .crashReports, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Saved Application State", isDirectory: true), category: .savedState, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("HTTPStorages", isDirectory: true), category: .cookies, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("WebKit", isDirectory: true), category: .cookies, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Cookies", isDirectory: true), category: .cookies, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("LaunchAgents", isDirectory: true), category: .launchItems, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Application Scripts", isDirectory: true), category: .scripts, extraDepth: 0),
+            Location(directory: userLib.appendingPathComponent("Mobile Documents", isDirectory: true), category: .iCloud, extraDepth: 0),
+            Location(directory: sysLib.appendingPathComponent("Application Support", isDirectory: true), category: .applicationSupport, extraDepth: 1),
+            Location(directory: sysLib.appendingPathComponent("Caches", isDirectory: true), category: .caches, extraDepth: 1),
+            Location(directory: sysLib.appendingPathComponent("Preferences", isDirectory: true), category: .preferences, extraDepth: 0),
+            Location(directory: sysLib.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true), category: .crashReports, extraDepth: 0),
+            Location(directory: sysLib.appendingPathComponent("LaunchAgents", isDirectory: true), category: .launchItems, extraDepth: 0),
+            Location(directory: sysLib.appendingPathComponent("LaunchDaemons", isDirectory: true), category: .launchItems, extraDepth: 0),
+            Location(directory: sysLib.appendingPathComponent("PrivilegedHelperTools", isDirectory: true), category: .launchItems, extraDepth: 0),
+        ]
+    }
+
+    /// Walk `location.directory`, classify each entry with `matcher`,
+    /// and write any matches into `found`.
+    ///
+    /// Recurses into unmatched subdirectories when `location.extraDepth`
+    /// allows, skipping descent into Apple-namespace folders so the
+    /// walker doesn't spelunk into system directories looking for
+    /// third-party leftovers.
+    private nonisolated static func walk(
+        location: Location,
+        matcher: AppMatcher,
         appPath: String,
         into found: inout [URL: RelatedItem]
     ) {
-        guard let bid = app.bundleID, !bid.isEmpty else { return }
-        let hits = SpotlightSearch.filesForBundleID(bid)
-        guard !hits.isEmpty else { return }
-
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        let userLib = home + "/Library/"
-        let sysLib = "/Library/"
-
-        for url in hits {
-            let std = url.standardizedFileURL
-            let path = std.path
-            if path == appPath { continue }
-            if path.hasPrefix(appPath + "/") { continue }
-            // Only surface library-scope hits; the goal is to add things our
-            // hand-rolled walk missed, not to surface every Spotlight match.
-            guard path.hasPrefix(userLib) || path.hasPrefix(sysLib) else { continue }
-            if found[std] != nil { continue }
-
-            let isDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            let size = sizeOfItem(at: std, isDirectory: isDir)
-            let category = categorize(path: path)
-            // iCloud entries hold user documents synced via iCloud Drive;
-            // deleting them locally can also remove them on other devices.
-            // Force opt-in regardless of how the entry was matched.
-            let shared = category == .iCloud
-            found[std] = RelatedItem(
-                url: std,
-                category: category,
-                sizeBytes: size,
-                isDirectory: isDir,
-                isShared: shared
-            )
-        }
+        walk(
+            directory: location.directory,
+            category: location.category,
+            matcher: matcher,
+            extraDepth: location.extraDepth,
+            appPath: appPath,
+            into: &found
+        )
     }
 
-    private nonisolated static func categorize(path: String) -> RelatedItem.Category {
-        // Cheap path-segment classifier so Spotlight results land under the
-        // right header in the results list.
-        if path.contains("/Application Support/") { return .applicationSupport }
-        if path.contains("/Caches/") { return .caches }
-        if path.contains("/Containers/") { return .containers }
-        if path.contains("/Group Containers/") { return .groupContainers }
-        if path.contains("/Preferences/") { return .preferences }
-        if path.contains("/Saved Application State/") { return .savedState }
-        if path.contains("/Logs/DiagnosticReports/") { return .crashReports }
-        if path.contains("/Logs/") { return .logs }
-        if path.contains("/HTTPStorages/") || path.contains("/WebKit/") || path.contains("/Cookies/") {
-            return .cookies
-        }
-        if path.contains("/LaunchAgents/") || path.contains("/LaunchDaemons/") || path.contains("/PrivilegedHelperTools/") {
-            return .launchItems
-        }
-        if path.contains("/Application Scripts/") { return .scripts }
-        if path.contains("/Mobile Documents/") { return .iCloud }
-        return .other
-    }
-
-    private nonisolated static func scan(
+    private nonisolated static func walk(
         directory: URL,
         category: RelatedItem.Category,
-        app: DroppedApp,
-        teamID: String?,
-        nameHints: [String],
+        matcher: AppMatcher,
         extraDepth: Int,
         appPath: String,
         into found: inout [URL: RelatedItem]
@@ -157,19 +144,11 @@ enum AppScanner {
             if std.path == appPath { continue }
             let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
 
-            let outcome = classify(
-                entry: entry,
-                app: app,
-                teamID: teamID,
-                nameHints: nameHints,
-                category: category
-            )
-            if outcome.matched {
+            let result = matcher.match(entry: entry, category: category)
+            if result.matched {
                 if found[std] == nil {
-                    let size = sizeOfItem(at: entry, isDirectory: isDir)
-                    // iCloud Documents hold real user files that sync to other
-                    // devices — require explicit opt-in instead of defaulting on.
-                    let shared = outcome.shared || category == .iCloud
+                    let size = FileSize.of(at: entry, isDirectory: isDir)
+                    let shared = result.shared || category == .iCloud
                     found[std] = RelatedItem(
                         url: entry,
                         category: category,
@@ -182,12 +161,10 @@ enum AppScanner {
             }
 
             if isDir, extraDepth > 0, !shouldSkipDescent(entry) {
-                scan(
+                walk(
                     directory: entry,
                     category: category,
-                    app: app,
-                    teamID: teamID,
-                    nameHints: nameHints,
+                    matcher: matcher,
                     extraDepth: extraDepth - 1,
                     appPath: appPath,
                     into: &found
@@ -196,6 +173,12 @@ enum AppScanner {
         }
     }
 
+    /// Decide whether to skip recursing into a subfolder during the
+    /// extra-depth pass.
+    ///
+    /// Apple-namespace folders (`com.apple.*`, `Apple/`, `CrashReporter/`)
+    /// host system content and never contain third-party leftovers; the
+    /// walker would burn time descending into them for nothing.
     private nonisolated static func shouldSkipDescent(_ url: URL) -> Bool {
         let name = url.lastPathComponent
         if name.hasPrefix("com.apple.") { return true }
@@ -203,130 +186,48 @@ enum AppScanner {
         return false
     }
 
-    /// Collect every short token we plausibly know the app by: display name, bundle ID's
-    /// last reverse-DNS component, and the .app filename. JetBrains stores Rider data in
-    /// `~/Library/Caches/JetBrains/Rider2025.3/`, where the folder name only matches the
-    /// `rider` token from the bundle ID — not "JetBrains Rider".
-    private nonisolated static func computeNameHints(app: DroppedApp) -> [String] {
-        var hints: Set<String> = []
-        let display = app.name.lowercased()
-        if display.count >= 3 { hints.insert(display) }
-
-        if let bid = app.bundleID,
-           let last = bid.split(separator: ".").last {
-            let token = String(last).lowercased()
-            if token.count >= 3 { hints.insert(token) }
-        }
-
-        let filename = app.url.deletingPathExtension().lastPathComponent.lowercased()
-        if filename.count >= 3 { hints.insert(filename) }
-
-        return Array(hints)
-    }
-
-    /// Decide whether `entry` belongs to `app`, and whether the match is a "shared with developer"
-    /// container (team-ID-prefixed group container) that should be off by default.
-    nonisolated static func classify(
-        entry: URL,
+    /// Add Spotlight hits — files whose `kMDItemCFBundleIdentifier`
+    /// matches this app — to the result set if they weren't already
+    /// matched by the directory walk.
+    ///
+    /// Restricted to library-scope hits so the supplement adds things
+    /// the hand-rolled walk missed (`/Library/Frameworks`, vendor install
+    /// directories, deeply nested helper bundles) rather than every
+    /// Spotlight match anywhere on disk.
+    private nonisolated static func supplementWithSpotlight(
         app: DroppedApp,
-        teamID: String?,
-        nameHints: [String],
-        category: RelatedItem.Category
-    ) -> (matched: Bool, shared: Bool) {
-        let full = entry.lastPathComponent.lowercased()
-        let base = entry.deletingPathExtension().lastPathComponent.lowercased()
+        appPath: String,
+        into found: inout [URL: RelatedItem]
+    ) {
+        guard let bid = app.bundleID, !bid.isEmpty else { return }
+        let hits = SpotlightSearch.filesForBundleID(bid)
+        guard !hits.isEmpty else { return }
 
-        if let raw = app.bundleID, !raw.isEmpty {
-            let bid = raw.lowercased()
-            if full == bid || base == bid { return (true, false) }
-            if full.hasPrefix(bid + ".") || base.hasPrefix(bid + ".") { return (true, false) }
-            if full == "group.\(bid)" || full.hasPrefix("group.\(bid).") { return (true, false) }
-            // iCloud containers under ~/Library/Mobile Documents/ are named
-            // with tildes instead of dots: `iCloud~com~apple~Pages`. The
-            // entry name was already lowercased into `full`, so match against
-            // a lowercased `icloud~` prefix.
-            if category == .iCloud {
-                let tildeBID = bid.replacingOccurrences(of: ".", with: "~")
-                if full == "icloud~\(tildeBID)" { return (true, false) }
-                if full.hasPrefix("icloud~\(tildeBID)~") { return (true, false) }
-            }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let userLib = home + "/Library/"
+        let sysLib = "/Library/"
+
+        for url in hits {
+            let std = url.standardizedFileURL
+            let path = std.path
+            if path == appPath { continue }
+            if path.hasPrefix(appPath + "/") { continue }
+            guard path.hasPrefix(userLib) || path.hasPrefix(sysLib) else { continue }
+            if found[std] != nil { continue }
+
+            let isDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let size = FileSize.of(at: std, isDirectory: isDir)
+            let category = CategoryClassifier.category(forPath: path)
+            // iCloud entries hold user documents that sync to other
+            // devices; force opt-in regardless of how they were matched.
+            let shared = category == .iCloud
+            found[std] = RelatedItem(
+                url: std,
+                category: category,
+                sizeBytes: size,
+                isDirectory: isDir,
+                isShared: shared
+            )
         }
-
-        for hint in nameHints {
-            if base == hint || full == hint { return (true, false) }
-            if wordBoundaryPrefix(base, prefix: hint) { return (true, false) }
-            if wordBoundaryPrefix(full, prefix: hint) { return (true, false) }
-        }
-
-        // Team-ID-prefixed group containers are usually shared between every app the
-        // developer ships (e.g. Microsoft Office's UBF8T346G9.Office). Surface them but
-        // default the toggle off so the user opts in.
-        if category == .groupContainers, let raw = teamID, !raw.isEmpty {
-            let tid = raw.lowercased()
-            if full.hasPrefix(tid + ".") {
-                return (true, true)
-            }
-        }
-
-        return (false, false)
-    }
-
-    /// Returns true if `s` starts with `prefix` and the next character is a non-letter
-    /// (digit, dot, space, dash, underscore). Avoids matching "Microsoft" in "MicrosoftAutoUpdate"
-    /// while still matching "Rider" in "Rider2024.3" or "Microsoft Word" in "Microsoft Word Data".
-    private nonisolated static func wordBoundaryPrefix(_ s: String, prefix: String) -> Bool {
-        guard prefix.count >= 3, s.count > prefix.count, s.hasPrefix(prefix) else { return false }
-        let next = s[s.index(s.startIndex, offsetBy: prefix.count)]
-        return !next.isLetter
-    }
-
-    nonisolated static func readTeamID(forAppAt url: URL) -> String? {
-        var staticCode: SecStaticCode?
-        let createStatus = SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode)
-        guard createStatus == errSecSuccess, let code = staticCode else { return nil }
-
-        // kSecCodeInfoTeamIdentifier lives in the cryptographic-signing
-        // section of the info dict, so it's only populated when we ask for
-        // it explicitly. Passing default flags here returns only the basic
-        // identifier set and leaves the team ID out — which made the
-        // installedTeamIDs cross-check a silent no-op.
-        var infoRef: CFDictionary?
-        let infoStatus = SecCodeCopySigningInformation(
-            code,
-            SecCSFlags(rawValue: kSecCSSigningInformation),
-            &infoRef
-        )
-        guard infoStatus == errSecSuccess,
-              let info = infoRef as? [String: Any] else { return nil }
-
-        return info[kSecCodeInfoTeamIdentifier as String] as? String
-    }
-
-    nonisolated static func sizeOfItem(at url: URL, isDirectory: Bool) -> Int64 {
-        if !isDirectory {
-            let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
-            if let values = try? url.resourceValues(forKeys: keys) {
-                return Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
-            }
-            return 0
-        }
-
-        let fm = FileManager.default
-        let keys: Set<URLResourceKey> = [.isDirectoryKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
-        guard let enumerator = fm.enumerator(
-            at: url,
-            includingPropertiesForKeys: Array(keys),
-            options: [],
-            errorHandler: { _, _ in true }
-        ) else { return 0 }
-
-        var total: Int64 = 0
-        for case let fileURL as URL in enumerator {
-            if let values = try? fileURL.resourceValues(forKeys: keys),
-               values.isDirectory == false {
-                total += Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
-            }
-        }
-        return total
     }
 }

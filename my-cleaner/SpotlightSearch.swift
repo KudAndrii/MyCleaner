@@ -5,10 +5,32 @@
 
 import Foundation
 
+/// Thin synchronous wrapper around the `mdfind` command-line tool.
+///
+/// MyCleaner uses Spotlight for two purposes:
+///
+/// - Supplementing the app scan with files whose
+///   `kMDItemCFBundleIdentifier` metadata names the dropped app, even
+///   when the parent folder doesn't (`Info.plist` files inside
+///   `/Library/Frameworks`, helper bundles in vendor install dirs).
+/// - Finding every `.app` on disk during installed-apps discovery, so
+///   apps in non-standard locations (Setapp, `/opt`, external volumes)
+///   aren't mistaken for uninstalled.
 enum SpotlightSearch {
 
-    // Run mdfind synchronously. Output is NUL-separated so paths with spaces
-    // or newlines can't break parsing. Empty array on any failure.
+    /// Run an `mdfind` query and return the matching URLs.
+    ///
+    /// Output is parsed as NUL-separated so paths containing spaces or
+    /// newlines round-trip correctly. Any launch or read failure
+    /// collapses to an empty result rather than throwing.
+    ///
+    /// - Parameters:
+    ///   - predicate: A raw Spotlight predicate string, passed verbatim
+    ///     to `mdfind`.
+    ///   - scopes: Optional list of URLs to restrict the search to.
+    ///     Maps to `-onlyin` flags. An empty array searches everything.
+    /// - Returns: The file URLs `mdfind` printed, or an empty array on
+    ///   failure.
     nonisolated static func find(predicate: String, scopes: [URL] = []) -> [URL] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
@@ -35,10 +57,19 @@ enum SpotlightSearch {
             .map { URL(fileURLWithPath: String($0)) }
     }
 
-    // Files that Spotlight has indexed as carrying this bundle ID — typically
-    // Info.plists inside .apps and .frameworks, plus preference plists and
-    // some container plists. Spotlight reaches places a directory walk
-    // doesn't, e.g. /usr/local, Adobe install dirs, /Applications subfolders.
+    /// Look up every file Spotlight has indexed as belonging to
+    /// `bundleID`.
+    ///
+    /// Combines an exact match on `kMDItemCFBundleIdentifier` with a
+    /// wildcard match on `<bundleID>.*`, so child bundle IDs (helper
+    /// extensions, plugin sub-bundles) are surfaced too. Typically this
+    /// pulls in `Info.plist` files inside `.app` and `.framework`
+    /// bundles, plus preference and container plists.
+    ///
+    /// - Parameter bundleID: The bundle identifier to search for. Any
+    ///   embedded quotes are stripped before being interpolated into
+    ///   the predicate.
+    /// - Returns: Matching file URLs, or an empty array.
     nonisolated static func filesForBundleID(_ bundleID: String) -> [URL] {
         let escaped = bundleID.replacingOccurrences(of: "\"", with: "")
         let predicate =
