@@ -113,7 +113,7 @@ enum AppScanner {
         }
     }
 
-    private nonisolated static func categorize(path: String) -> RelatedItem.Category {
+    nonisolated static func categorize(path: String) -> RelatedItem.Category {
         // Cheap path-segment classifier so Spotlight results land under the
         // right header in the results list.
         if path.contains("/Application Support/") { return .applicationSupport }
@@ -135,7 +135,7 @@ enum AppScanner {
         return .other
     }
 
-    private nonisolated static func scan(
+    nonisolated static func scan(
         directory: URL,
         category: RelatedItem.Category,
         app: DroppedApp,
@@ -196,7 +196,7 @@ enum AppScanner {
         }
     }
 
-    private nonisolated static func shouldSkipDescent(_ url: URL) -> Bool {
+    nonisolated static func shouldSkipDescent(_ url: URL) -> Bool {
         let name = url.lastPathComponent
         if name.hasPrefix("com.apple.") { return true }
         if name == "Apple" || name == "CrashReporter" { return true }
@@ -207,7 +207,7 @@ enum AppScanner {
     /// last reverse-DNS component, and the .app filename. JetBrains stores Rider data in
     /// `~/Library/Caches/JetBrains/Rider2025.3/`, where the folder name only matches the
     /// `rider` token from the bundle ID — not "JetBrains Rider".
-    private nonisolated static func computeNameHints(app: DroppedApp) -> [String] {
+    nonisolated static func computeNameHints(app: DroppedApp) -> [String] {
         var hints: Set<String> = []
         let display = app.name.lowercased()
         if display.count >= 3 { hints.insert(display) }
@@ -274,7 +274,7 @@ enum AppScanner {
     /// Returns true if `s` starts with `prefix` and the next character is a non-letter
     /// (digit, dot, space, dash, underscore). Avoids matching "Microsoft" in "MicrosoftAutoUpdate"
     /// while still matching "Rider" in "Rider2024.3" or "Microsoft Word" in "Microsoft Word Data".
-    private nonisolated static func wordBoundaryPrefix(_ s: String, prefix: String) -> Bool {
+    nonisolated static func wordBoundaryPrefix(_ s: String, prefix: String) -> Bool {
         guard prefix.count >= 3, s.count > prefix.count, s.hasPrefix(prefix) else { return false }
         let next = s[s.index(s.startIndex, offsetBy: prefix.count)]
         return !next.isLetter

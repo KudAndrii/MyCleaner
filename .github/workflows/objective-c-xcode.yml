@@ -34,3 +34,16 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             clean build
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project my-cleaner.xcodeproj \
+            -scheme my-cleaner \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            test

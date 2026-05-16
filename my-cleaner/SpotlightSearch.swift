@@ -40,10 +40,17 @@ enum SpotlightSearch {
     // some container plists. Spotlight reaches places a directory walk
     // doesn't, e.g. /usr/local, Adobe install dirs, /Applications subfolders.
     nonisolated static func filesForBundleID(_ bundleID: String) -> [URL] {
+        return find(predicate: bundleIDPredicate(bundleID))
+    }
+
+    // Builds the mdfind predicate that matches files whose
+    // `kMDItemCFBundleIdentifier` equals the given bundle ID (case-
+    // insensitive) or starts with `<bundleID>.` (case-insensitive,
+    // wildcard suffix). Double quotes inside the bundle ID are stripped
+    // because mdfind has no escape syntax for them inside a quoted value.
+    nonisolated static func bundleIDPredicate(_ bundleID: String) -> String {
         let escaped = bundleID.replacingOccurrences(of: "\"", with: "")
-        let predicate =
-            "kMDItemCFBundleIdentifier == \"\(escaped)\"c" +
+        return "kMDItemCFBundleIdentifier == \"\(escaped)\"c" +
             " || kMDItemCFBundleIdentifier == \"\(escaped).*\"wc"
-        return find(predicate: predicate)
     }
 }

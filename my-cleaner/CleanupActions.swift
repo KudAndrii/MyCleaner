@@ -29,20 +29,25 @@ enum CleanupActions {
         let uid = getuid()
 
         for url in urls where url.pathExtension.lowercased() == "plist" {
-            let label = url.deletingPathExtension().lastPathComponent
-            let path = url.path
-            let target: String
-            if path.contains("/LaunchDaemons/") {
-                target = "system/\(label)"
-            } else if path.hasPrefix(home) {
-                target = "gui/\(uid)/\(label)"
-            } else {
-                // /Library/LaunchAgents — agent loaded per-user, but the
-                // label lives in the gui domain for the current user.
-                target = "gui/\(uid)/\(label)"
-            }
+            let target = bootoutTarget(for: url, homePrefix: home, uid: uid)
             runSilently("/bin/launchctl", ["bootout", target])
         }
+    }
+
+    // The launchctl domain target for a LaunchAgent/LaunchDaemon plist.
+    // System daemons run in the `system/` domain; everything else (user
+    // LaunchAgents and `/Library/LaunchAgents` plists that load per-user)
+    // is addressed in the current user's `gui/<uid>/` domain.
+    nonisolated static func bootoutTarget(for url: URL, homePrefix: String, uid: UInt32) -> String {
+        let label = url.deletingPathExtension().lastPathComponent
+        let path = url.path
+        if path.contains("/LaunchDaemons/") {
+            return "system/\(label)"
+        }
+        if path.hasPrefix(homePrefix) {
+            return "gui/\(uid)/\(label)"
+        }
+        return "gui/\(uid)/\(label)"
     }
 
     // After deleting a <bundleID>.plist from Preferences, cfprefsd keeps the

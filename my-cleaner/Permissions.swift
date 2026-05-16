@@ -59,7 +59,7 @@ enum Permissions {
         }
     }
 
-    private static func isPermissionError(_ error: Error) -> Bool {
+    static func isPermissionError(_ error: Error) -> Bool {
         let ns = error as NSError
         if ns.domain == NSPOSIXErrorDomain, ns.code == Int(EPERM) || ns.code == Int(EACCES) {
             return true

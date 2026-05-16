@@ -85,7 +85,7 @@ enum OrphanScanner {
         return OrphanScanResult(groups: groups)
     }
 
-    private nonisolated static func scanDir(
+    nonisolated static func scanDir(
         _ dir: URL,
         category: RelatedItem.Category,
         installedBundleIDs: Set<String>,
@@ -172,7 +172,7 @@ enum OrphanScanner {
     // category-specific naming convention (group prefix, iCloud tilde-encoded
     // form, .plist / .savedState / .binarycookies suffix). Returns nil for
     // entries that don't look like a bundle ID at all.
-    private nonisolated static func candidateBundleID(
+    nonisolated static func candidateBundleID(
         for url: URL,
         category: RelatedItem.Category
     ) -> String? {
@@ -212,7 +212,7 @@ enum OrphanScanner {
         return looksLikeBundleID(stripped) ? stripped : nil
     }
 
-    private nonisolated static func stripKnownSuffix(_ name: String) -> String {
+    nonisolated static func stripKnownSuffix(_ name: String) -> String {
         let suffixes = [".savedState", ".binarycookies"]
         for suffix in suffixes where name.hasSuffix(suffix) {
             return String(name.dropLast(suffix.count))
@@ -220,7 +220,7 @@ enum OrphanScanner {
         return name
     }
 
-    private nonisolated static func looksLikeBundleID(_ s: String) -> Bool {
+    nonisolated static func looksLikeBundleID(_ s: String) -> Bool {
         // Must have at least one dot, no path separators, no spaces, and
         // each component non-empty. The first segment must look like a
         // reverse-DNS root (≥ 2 chars, starts with a letter) so we don't
@@ -252,7 +252,7 @@ enum OrphanScanner {
         return FileManager.default.fileExists(atPath: url.path)
     }
 
-    private nonisolated static func stripByHostUUID(_ base: String) -> String {
+    nonisolated static func stripByHostUUID(_ base: String) -> String {
         // `<bundleID>.XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` → `<bundleID>`.
         let parts = base.split(separator: ".")
         guard let last = parts.last,
@@ -261,7 +261,7 @@ enum OrphanScanner {
         return parts.dropLast().joined(separator: ".")
     }
 
-    private nonisolated static func teamIDPrefix(of s: String) -> String? {
+    nonisolated static func teamIDPrefix(of s: String) -> String? {
         // Apple team IDs are 10 uppercase alphanumerics.
         guard let dot = s.firstIndex(of: ".") else { return nil }
         let head = String(s[..<dot])
@@ -280,7 +280,7 @@ enum OrphanScanner {
         return parts.prefix(2).joined(separator: ".")
     }
 
-    private nonisolated static func isAppleReserved(_ bid: String) -> Bool {
+    nonisolated static func isAppleReserved(_ bid: String) -> Bool {
         let lower = bid.lowercased()
         if lower.hasPrefix("com.apple.") { return true }
         if lower == "apple" || lower.hasPrefix("apple.") { return true }
