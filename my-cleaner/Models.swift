@@ -59,14 +59,21 @@ nonisolated struct ScanResult: Sendable {
     /// or System Settings. Empty when the app didn't register any.
     let systemExtensions: [SystemExtensionInfo]
 
+    /// SMAppService-registered login items / background agents. Also
+    /// non-trashable — macOS prunes them itself once the owning app
+    /// is gone, so this surface is informational only.
+    let loginItems: [LoginItemInfo]
+
     init(
         appSize: Int64,
         items: [RelatedItem],
-        systemExtensions: [SystemExtensionInfo] = []
+        systemExtensions: [SystemExtensionInfo] = [],
+        loginItems: [LoginItemInfo] = []
     ) {
         self.appSize = appSize
         self.items = items
         self.systemExtensions = systemExtensions
+        self.loginItems = loginItems
     }
 }
 
