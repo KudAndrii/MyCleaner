@@ -8,6 +8,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var model = CleanerModel()
     @State private var permissions = PermissionsChecker()
+    @State private var scannerHealth = ScannerHealthChecker()
     @State private var showPermissions = false
 
     var body: some View {
@@ -20,12 +21,17 @@ struct ContentView: View {
         .frame(minWidth: 760, minHeight: 560)
         .task {
             permissions.refresh()
-            if permissions.needsAttention {
+            scannerHealth.refresh()
+            if permissions.needsAttention || scannerHealth.needsAttention {
                 showPermissions = true
             }
         }
         .sheet(isPresented: $showPermissions) {
-            PermissionsView(permissions: permissions, isPresented: $showPermissions)
+            PermissionsView(
+                permissions: permissions,
+                scannerHealth: scannerHealth,
+                isPresented: $showPermissions
+            )
         }
     }
 
@@ -47,6 +53,7 @@ struct ContentView: View {
         case .idle:
             DropZoneView(model: model, permissions: permissions) {
                 permissions.refresh()
+                scannerHealth.refresh()
                 showPermissions = true
             }
         case .analyzing:

@@ -7,11 +7,21 @@ already see when they grant Full Disk Access or App Management.
 
 ## Status
 
-Not implemented. Discussed during the rollout of the
-`pkgutil` / `systemextensionsctl` / `sfltool` scanners but
-deliberately deferred — those binaries ship with macOS and can't
-realistically be missing on macOS 26. The deferral is a UX call,
-not a technical one.
+Implemented. Landed alongside the login-items toggle work. See
+`ScannerHealth.swift`, the `scannerSection` in `PermissionsView`,
+and the launch-time wiring in `ContentView`. Sheet auto-opens on
+launch when either `permissions.needsAttention` or
+`scannerHealth.needsAttention` is true.
+
+### Deviation from the original sketch
+
+The `loginItems` probe does **not** invoke `sfltool dumpbtm` as
+originally proposed. That command requires admin and would
+re-introduce the launch-time password prompt the SMAppService
+toggle was specifically designed to avoid. The probe falls back to
+a file-existence check at `/usr/bin/sfltool`; "binary present but
+refuses to run" surfaces via the toggle's runtime path (the prompt
+itself) instead of the diagnostic surface.
 
 ## Problem
 

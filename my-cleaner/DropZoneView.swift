@@ -22,10 +22,29 @@ struct DropZoneView: View {
             }
             dropZone
             loginItemsRow
+            diagnosticsLink
         }
         .padding(24)
         .onAppear {
             permissions.refresh()
+        }
+    }
+
+    /// Always-visible entry point into the diagnostics sheet so users
+    /// on a healthy machine — who never see the auto-open prompt —
+    /// can still inspect permissions and scanner availability.
+    private var diagnosticsLink: some View {
+        HStack {
+            Spacer()
+            Button {
+                onReviewPermissions()
+            } label: {
+                Label("System checks…", systemImage: "stethoscope")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Inspect permissions and scanner availability.")
         }
     }
 

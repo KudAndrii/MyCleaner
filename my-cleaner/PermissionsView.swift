@@ -7,22 +7,29 @@ import SwiftUI
 
 struct PermissionsView: View {
     @Bindable var permissions: PermissionsChecker
+    @Bindable var scannerHealth: ScannerHealthChecker
     @Binding var isPresented: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            VStack(spacing: 12) {
-                ForEach(PermissionKind.allCases) { kind in
-                    row(for: kind)
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(PermissionKind.allCases) { kind in
+                        row(for: kind)
+                    }
                 }
+                .padding(20)
+
+                Divider()
+
+                scannerSection
             }
-            .padding(20)
             Divider()
             footer
         }
-        .frame(minWidth: 520, idealWidth: 560)
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 420, idealHeight: 580)
     }
 
     private var header: some View {
@@ -111,10 +118,106 @@ struct PermissionsView: View {
         }
     }
 
+    // MARK: - Scanner availability section
+
+    private var scannerSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "stethoscope")
+                    .foregroundStyle(.tint)
+                Text("Scanner availability")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+
+            Text("Three of My Cleaner's scanners shell out to macOS system tools. If a binary isn't where we expect it, those sections won't appear in scan results — this is where you'd see why.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 12) {
+                ForEach(ScannerKind.allCases) { kind in
+                    scannerRow(for: kind)
+                }
+            }
+        }
+        .padding(20)
+    }
+
+    @ViewBuilder
+    private func scannerRow(for kind: ScannerKind) -> some View {
+        let status = scannerHealth.status(for: kind)
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: kind.symbol)
+                .font(.title2)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(kind.title).font(.headline)
+                    scannerStatusBadge(status)
+                }
+                Text(kind.explanation)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            VStack(alignment: .trailing, spacing: 6) {
+                if status == .ok {
+                    Label("Available", systemImage: "checkmark.seal.fill")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.green)
+                        .font(.title2)
+                } else {
+                    Button {
+                        scannerHealth.refresh(kind)
+                    } label: {
+                        Text("Re-check").frame(minWidth: 72)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                }
+            }
+        }
+        .padding(14)
+        .background(.background.secondary, in: .rect(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func scannerStatusBadge(_ status: ScannerHealth) -> some View {
+        switch status {
+        case .ok:
+            Label("Available", systemImage: "checkmark.circle.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.green)
+        case .unavailable:
+            Label("Not available", systemImage: "exclamationmark.triangle.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.orange)
+        case .failed:
+            Label("Failed", systemImage: "xmark.octagon.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.red)
+        case .unknown:
+            Label("Not checked", systemImage: "questionmark.circle")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Footer
+
     private var footer: some View {
         HStack {
             Button("Re-check all") {
                 permissions.refresh()
+                scannerHealth.refresh()
             }
             .buttonStyle(.bordered)
             Spacer()
