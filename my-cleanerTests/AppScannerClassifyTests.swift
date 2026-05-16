@@ -9,7 +9,7 @@
 
 import Foundation
 import Testing
-@testable import my_cleaner
+@testable import MyCleaner
 
 @Suite("AppScanner.classify")
 struct AppScannerClassifyTests {
@@ -162,7 +162,7 @@ struct AppScannerClassifyTests {
 
     @Test("Name hint exact match")
     func nameHintExact() throws {
-        let app = try makeApp(bundleID: nil, name: "Rider")
+        let app = try makeApp(name: "Rider", bundleID: nil)
         let entry = URL(fileURLWithPath: "/Library/Application Support/Rider")
         let result = AppScanner.classify(
             entry: entry,
@@ -176,7 +176,7 @@ struct AppScannerClassifyTests {
 
     @Test("Name hint word-boundary match")
     func nameHintWordBoundary() throws {
-        let app = try makeApp(bundleID: nil, name: "Rider")
+        let app = try makeApp(name: "Rider", bundleID: nil)
         let entry = URL(fileURLWithPath: "/Library/Application Support/Rider2024.3")
         let result = AppScanner.classify(
             entry: entry,
@@ -190,7 +190,7 @@ struct AppScannerClassifyTests {
 
     @Test("Name hint rejects letter-following")
     func nameHintRejectsLetterFollowing() throws {
-        let app = try makeApp(bundleID: nil, name: "Rider")
+        let app = try makeApp(name: "Rider", bundleID: nil)
         let entry = URL(fileURLWithPath: "/Library/Application Support/RiderProjects")
         let result = AppScanner.classify(
             entry: entry,
@@ -235,7 +235,7 @@ struct AppScannerClassifyTests {
 
     @Test("No bundle ID and no name hints means no match")
     func nothingMatches() throws {
-        let app = try makeApp(bundleID: nil, name: "X")
+        let app = try makeApp(name: "X", bundleID: nil)
         let entry = URL(fileURLWithPath: "/Library/Preferences/com.unrelated.foo.plist")
         let result = AppScanner.classify(
             entry: entry,

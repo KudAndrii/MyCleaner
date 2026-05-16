@@ -12,7 +12,7 @@
 
 import Foundation
 import Testing
-@testable import my_cleaner
+@testable import MyCleaner
 
 @Suite("CleanerModel — initial state")
 @MainActor
@@ -105,7 +105,7 @@ struct CleanerModelPerAppTests {
         let m = CleanerModel()
         m.items = [item(10, selected: true), item(20, selected: false), item(30, selected: false)]
         m.toggleAll()
-        #expect(m.items.allSatisfy(\.isSelected))
+        #expect(m.items.allSatisfy { $0.isSelected })
     }
 
     @Test("toggleAll deselects everything when all were selected")
@@ -214,7 +214,7 @@ struct CleanerModelOrphanTests {
             group("a.b.d", sizes: [1], selected: false),
         ]
         m.toggleAllOrphans()
-        #expect(m.orphanGroups.allSatisfy(\.isSelected))
+        #expect(m.orphanGroups.allSatisfy { $0.isSelected })
     }
 
     @Test("toggleAllOrphans deselects all when all are selected")

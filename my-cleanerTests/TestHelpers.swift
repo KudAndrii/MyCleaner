@@ -4,7 +4,7 @@
 //
 
 import Foundation
-@testable import my_cleaner
+@testable import MyCleaner
 
 /// Builds a minimal on-disk `.app` bundle (Contents/Info.plist plus
 /// a placeholder executable) so we can exercise `DroppedApp(url:)`

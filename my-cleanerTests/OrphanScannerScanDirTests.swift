@@ -10,7 +10,7 @@
 
 import Foundation
 import Testing
-@testable import my_cleaner
+@testable import MyCleaner
 
 @Suite("OrphanScanner.scanDir")
 struct OrphanScannerScanDirTests {
@@ -187,7 +187,7 @@ struct OrphanScannerScanDirTests {
             into: &byBundleID
         )
         let items = try #require(byBundleID["com.totally.unique.test"])
-        #expect(items.allSatisfy(\.isShared))
+        #expect(items.allSatisfy { $0.isShared })
     }
 
     @Test("Non-bundle-ID-shaped entries are silently skipped")

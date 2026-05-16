@@ -230,7 +230,7 @@ enum OrphanScanner {
               !s.contains(" "),
               !s.hasPrefix("."),
               !s.hasSuffix(".") else { return false }
-        let parts = s.split(separator: ".")
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count >= 2,
               parts.allSatisfy({ !$0.isEmpty }) else { return false }
         let head = parts[0]

@@ -5,7 +5,7 @@
 
 import Foundation
 import Testing
-@testable import my_cleaner
+@testable import MyCleaner
 
 @Suite("Permissions.isPermissionError")
 struct IsPermissionErrorTests {
