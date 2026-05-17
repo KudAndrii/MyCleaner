@@ -1,8 +1,18 @@
-# MyCleaner
+<p align="center">
+  <img src="./repo-assets/my-cleaner_icon.png" alt="MyCleaner icon" width="128" height="128"/>
+</p>
 
-A macOS utility that finds every file an app has scattered around your
-system, then moves the lot — together with the app itself — to the Trash.
-Built with SwiftUI and the new Liquid Glass material.
+<h1 align="center">MyCleaner</h1>
+
+<p align="center">
+  A macOS utility that finds every file an app has scattered around your Mac,
+  then moves the lot — together with the app itself — to the Trash.<br/>
+  Built with SwiftUI and the new Liquid Glass material.
+</p>
+
+<p align="center">
+  <img src="./repo-assets/my-cleaner_dropzone.png" alt="MyCleaner dropzone" width="760"/>
+</p>
 
 ## What it does
 
@@ -62,6 +72,18 @@ longer installed. Attribution is by bundle ID only (no name-based
 heuristics) and the scan is backstopped by a Launch Services lookup so
 apps installed outside `/Applications` (Setapp, `/opt`, mounted DMGs)
 aren't mistaken for orphans.
+
+## Screenshots
+
+| Per-app cleanup | Orphaned files |
+| --- | --- |
+| ![App cleanup](./repo-assets/my-cleaner_app-cleanup.png) | ![Orphaned cleanup](./repo-assets/my-cleaner_orphaned-cleanup.png) |
+| The results view after dropping an app — every leftover bucketed and toggleable, with the app size and Trash total in the footer. | The orphan flow surfacing support files whose owning app is no longer installed, grouped by bundle ID. |
+
+| Login items (opt-in) | Permissions |
+| --- | --- |
+| ![Login items](./repo-assets/my-cleaner_feature_login-items.png) | ![Permissions](./repo-assets/my-cleaner_permissions.png) |
+| `SMAppService` background helpers attributable to the dropped app, behind an admin-prompt toggle so credentials are only requested when you ask. | Full Disk Access onboarding — without it the scanner can't read large parts of `~/Library` and `/Library`. |
 
 ## Requirements
 

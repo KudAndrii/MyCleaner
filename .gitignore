@@ -68,3 +68,7 @@ fastlane/test_output
 DerivedData/
 build/
 *.moved-aside
+
+# Local scratch / debug folder — not tracked. Assets referenced by
+# README.md live in repo-assets/ instead.
+debug/
