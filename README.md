@@ -85,32 +85,31 @@ aren't mistaken for orphans.
 | ![Login items](./repo-assets/my-cleaner_feature_login-items.png) | ![Permissions](./repo-assets/my-cleaner_permissions.png) |
 | `SMAppService` background helpers attributable to the dropped app, behind an admin-prompt toggle so credentials are only requested when you ask. | Full Disk Access onboarding — without it the scanner can't read large parts of `~/Library` and `/Library`. |
 
-## Requirements
+## Install
 
-- macOS 26 or later (uses the Liquid Glass APIs).
-- Xcode 26 or later.
+Requires **macOS 26 or later** (uses the Liquid Glass APIs).
 
-## Building
+1. Download the latest `.dmg` from the [Releases page](https://github.com/KudAndrii/MyCleaner/releases/latest).
+2. Open the DMG and drag **MyCleaner.app** into `/Applications`.
+3. First launch: right-click → **Open**. The build isn't notarised, so
+   Gatekeeper warns once; after that it opens normally.
+
+## Build from source
+
+For contributors, or if you want to tweak the code. Requires **Xcode 26
+or later** in addition to the macOS requirement above.
 
 1. Open `my-cleaner.xcodeproj`.
-2. Select the **my-cleaner** target → **Signing & Capabilities**.
-3. Pick a team. For local-only use, set "Sign to Run Locally" if you don't
-   have a paid Apple Developer account.
-4. **App Sandbox must stay disabled** (the capability is already removed).
+2. Select the **my-cleaner** target → **Signing & Capabilities** and pick
+   a team. "Sign to Run Locally" is fine for local-only use without a
+   paid Apple Developer account.
+3. **App Sandbox must stay disabled** (the capability is already removed).
    The scanner needs the real `~/Library`, not the app's container.
-5. **Run** (⌘R) — drop any app from `/Applications` onto the window.
+4. **Run** (⌘R) — drop any app from `/Applications` onto the window.
 
-## Installing on your Mac
-
-Easiest path, no Archive needed:
-
-1. Set the scheme's Run configuration to **Release** (Edit Scheme → Run →
-   Build Configuration → Release).
-2. Build (⌘B).
-3. **Product → Show Build Folder in Finder** → grab `my-cleaner.app` from
-   `Build/Products/Release/`.
-4. Drag it to `/Applications`. First launch: right-click → **Open** (the
-   build isn't notarised, so Gatekeeper warns once).
+To install a locally-built copy: switch the scheme's Run configuration to
+**Release**, build (⌘B), then **Product → Show Build Folder in Finder**
+and drag `MyCleaner.app` from `Build/Products/Release/` to `/Applications`.
 
 ## Caveats
 
