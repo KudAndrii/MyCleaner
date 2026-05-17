@@ -14,6 +14,18 @@
   <img src="./repo-assets/my-cleaner_dropzone.png" alt="MyCleaner dropzone" width="760"/>
 </p>
 
+## Why this exists
+
+MyCleaner is **open source, free, and built for personal use** — shared
+with everyone tired of paying for software this small yet so important
+to have. No sign-up, no subscription, no in-app purchase, no trial timer.
+The source is right here; if you don't trust it, read it.
+
+I'm a software engineer, but Mac and Swift aren't my day job. If
+something looks unidiomatic, the UI could use polish, or you spot a
+better approach anywhere in the code, pull requests are very welcome —
+see [Contributing](#contributing).
+
 ## What it does
 
 Drop a `.app` onto the window. MyCleaner walks `~/Library` and `/Library`,
