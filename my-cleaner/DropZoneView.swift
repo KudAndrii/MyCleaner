@@ -12,6 +12,9 @@ struct DropZoneView: View {
     @Bindable var permissions: PermissionsChecker
     var onReviewPermissions: () -> Void
 
+    @State private var showDuplicateOptions = false
+    @State private var duplicateScope: Set<DuplicateScopeFolder> = Set(DuplicateScopeFolder.allCases)
+
     var body: some View {
         VStack(spacing: 14) {
             if SandboxStatus.isSandboxed {
@@ -27,6 +30,15 @@ struct DropZoneView: View {
         .padding(24)
         .onAppear {
             permissions.refresh()
+        }
+        .sheet(isPresented: $showDuplicateOptions) {
+            DuplicateScopeView(
+                selection: $duplicateScope,
+                isPresented: $showDuplicateOptions
+            ) { urls in
+                showDuplicateOptions = false
+                Task { await model.startDuplicateScan(scope: urls) }
+            }
         }
     }
 
@@ -136,6 +148,16 @@ struct DropZoneView: View {
                 .buttonStyle(.glass)
                 .controlSize(.large)
                 .help("Scan ~/Library for support files whose owning app is no longer installed.")
+
+                Button {
+                    showDuplicateOptions = true
+                } label: {
+                    Label("Find duplicate files", systemImage: "doc.on.doc")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .help("Compare files in your folders by exact content and surface redundant copies.")
             }
 
             if let error = model.errorMessage {

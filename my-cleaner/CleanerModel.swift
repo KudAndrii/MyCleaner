@@ -37,6 +37,8 @@ final class CleanerModel {
         case done(CleanupReport)
         case orphanScanning
         case orphanResults
+        case duplicateScanning
+        case duplicateResults
     }
 
     // MARK: - Shared state
@@ -47,8 +49,14 @@ final class CleanerModel {
     var items: [RelatedItem] = []
     var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
+    var duplicateGroups: [DuplicateGroup] = []
     var errorMessage: String?
     var isHovering: Bool = false
+
+    /// Cancellation handle for the in-flight duplicate scan, if any.
+    /// Stored so the UI can call ``cancelDuplicateScan()`` from the
+    /// scanning view without coordinating Task identity through state.
+    private var duplicateScanTask: Task<[DuplicateGroup], Error>?
 
     // MARK: - Login items (opt-in)
 
@@ -234,6 +242,9 @@ final class CleanerModel {
         systemExtensions = []
         currentTeamID = nil
         orphanGroups = []
+        duplicateGroups = []
+        duplicateScanTask?.cancel()
+        duplicateScanTask = nil
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -319,6 +330,135 @@ final class CleanerModel {
             }
         }.value
 
+        stage = .done(report)
+    }
+
+    // MARK: - Duplicate selection (derived)
+
+    /// Total number of copies the user has selected for deletion
+    /// across every duplicate group.
+    var duplicateSelectedCount: Int {
+        duplicateGroups.reduce(0) { acc, group in
+            acc + group.copies.lazy.filter(\.isSelectedForDeletion).count
+        }
+    }
+
+    /// Bytes the user would recover by trashing the currently
+    /// selected copies — `sum(sizePerCopy × selectedCopies)` across
+    /// every group.
+    var duplicateSelectedSize: Int64 {
+        duplicateGroups.reduce(0) { $0 + $1.wastedBytes }
+    }
+
+    /// Maximum recoverable bytes across every group — `wastedBytes`
+    /// summed with one copy kept per group. Used by the results
+    /// header so the user can see how much is reachable in total
+    /// independently of their current selection.
+    var duplicateMaximumRecoverableBytes: Int64 {
+        duplicateGroups.reduce(0) { $0 + $1.maximumRecoverableBytes }
+    }
+
+    /// Total distinct file copies across every duplicate group,
+    /// regardless of selection. Used by the empty-state and
+    /// header strings.
+    var duplicateTotalCopies: Int {
+        duplicateGroups.reduce(0) { $0 + $1.copies.count }
+    }
+
+    // MARK: - Duplicate flow
+
+    /// Kicks off the duplicate scan and parks the result on
+    /// ``duplicateGroups``.
+    ///
+    /// The detached task is stored on ``duplicateScanTask`` so a
+    /// concurrent ``cancelDuplicateScan()`` can interrupt the walk
+    /// mid-flight; the scanner itself yields to cooperative
+    /// cancellation between every file and every hash chunk so the
+    /// observable latency is sub-second.
+    func startDuplicateScan(scope: [URL]) async {
+        errorMessage = nil
+        duplicateGroups = []
+        stage = .duplicateScanning
+
+        let task = Task.detached(priority: .userInitiated) {
+            try await DuplicateScanner.scan(scope: scope)
+        }
+        duplicateScanTask = task
+
+        do {
+            let groups = try await task.value
+            // Guard against a stale completion after the user
+            // cancelled and started another flow.
+            guard duplicateScanTask == task else { return }
+            duplicateGroups = groups
+            stage = .duplicateResults
+        } catch is CancellationError {
+            // Honored cancellation — back to the dropzone without
+            // surfacing an error.
+            if stage == .duplicateScanning { stage = .idle }
+        } catch {
+            errorMessage = "Duplicate scan failed: \(error.localizedDescription)"
+            stage = .idle
+        }
+        if duplicateScanTask == task { duplicateScanTask = nil }
+    }
+
+    /// Cancels the in-flight duplicate scan. No-op when no scan is
+    /// running. The scan task observes cancellation between files /
+    /// hash chunks and transitions back to ``Stage/idle``.
+    func cancelDuplicateScan() {
+        duplicateScanTask?.cancel()
+    }
+
+    /// Flips a single duplicate copy's selection.
+    ///
+    /// Refuses to deselect the last kept copy in a group so the user
+    /// can't accidentally mark every copy for deletion — the safety
+    /// rule in the feature spec.
+    func toggleDuplicateCopy(groupID: UUID, copyID: UUID) {
+        guard let gi = duplicateGroups.firstIndex(where: { $0.id == groupID }),
+              let ci = duplicateGroups[gi].copies.firstIndex(where: { $0.id == copyID })
+        else { return }
+
+        let currentlySelected = duplicateGroups[gi].copies[ci].isSelectedForDeletion
+        if !currentlySelected {
+            // About to select for deletion — make sure at least one
+            // other copy will remain kept.
+            let othersKept = duplicateGroups[gi].copies.enumerated().contains { idx, copy in
+                idx != ci && !copy.isSelectedForDeletion
+            }
+            guard othersKept else { return }
+        }
+        duplicateGroups[gi].copies[ci].isSelectedForDeletion.toggle()
+    }
+
+    /// `true` when at least one other copy in the group is currently
+    /// kept (i.e. the supplied copy can be safely deselected without
+    /// hitting the "always keep one" guard).
+    ///
+    /// Exposed so the UI can disable the toggle on the last kept
+    /// copy and surface a hint, matching the behaviour of
+    /// ``toggleDuplicateCopy(groupID:copyID:)``.
+    func canDeselectDuplicateCopy(groupID: UUID, copyID: UUID) -> Bool {
+        guard let group = duplicateGroups.first(where: { $0.id == groupID }) else { return false }
+        guard let copy = group.copies.first(where: { $0.id == copyID }) else { return false }
+        if copy.isSelectedForDeletion { return true }
+        return group.copies.contains { $0.id != copyID && !$0.isSelectedForDeletion }
+    }
+
+    /// Moves every selected duplicate copy to the Trash and
+    /// transitions to `.done` with the resulting ``CleanupReport``.
+    ///
+    /// Unlike the per-app and orphan flows, no bundle-scoped
+    /// side-effects fire — duplicate detection doesn't touch
+    /// preferences, launch items, or TCC entries.
+    func confirmDuplicateCleanup() async {
+        let urls = duplicateGroups.flatMap { group in
+            group.copies.filter(\.isSelectedForDeletion).map(\.url)
+        }
+        guard !urls.isEmpty else { return }
+        stage = .cleaning
+        let report = await trashURLs(urls)
         stage = .done(report)
     }
 
