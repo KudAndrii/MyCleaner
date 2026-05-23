@@ -136,6 +136,16 @@ struct DropZoneView: View {
                 .buttonStyle(.glass)
                 .controlSize(.large)
                 .help("Scan ~/Library for support files whose owning app is no longer installed.")
+
+                Button {
+                    Task { await model.startLargeFileScan() }
+                } label: {
+                    Label("Find large files", systemImage: "scalemass")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .help("Rank the biggest files and bundles in your home directory for one-click cleanup.")
             }
 
             if let error = model.errorMessage {

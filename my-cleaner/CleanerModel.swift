@@ -37,6 +37,8 @@ final class CleanerModel {
         case done(CleanupReport)
         case orphanScanning
         case orphanResults
+        case largeFileScanning
+        case largeFileResults
     }
 
     // MARK: - Shared state
@@ -47,6 +49,19 @@ final class CleanerModel {
     var items: [RelatedItem] = []
     var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
+    var largeFiles: [LargeFileEntry] = []
+
+    /// User-controlled minimum-size filter for the large-file view.
+    /// Drives the slider in `LargeFileResultsView` and re-narrows the
+    /// already-scanned `largeFiles` list client-side — no re-scan
+    /// needed when the user nudges the slider.
+    var largeFileMinimumBytes: Int64 = LargeFileScanner.defaultMinimumBytes
+
+    /// User-controlled category filter chip. `nil` means "show every
+    /// category"; otherwise only entries in the selected bucket are
+    /// visible.
+    var largeFileCategoryFilter: LargeFileCategory?
+
     var errorMessage: String?
     var isHovering: Bool = false
 
@@ -234,6 +249,9 @@ final class CleanerModel {
         systemExtensions = []
         currentTeamID = nil
         orphanGroups = []
+        largeFiles = []
+        largeFileCategoryFilter = nil
+        largeFileMinimumBytes = LargeFileScanner.defaultMinimumBytes
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -319,6 +337,97 @@ final class CleanerModel {
             }
         }.value
 
+        stage = .done(report)
+    }
+
+    // MARK: - Large-file selection (derived)
+
+    /// Entries that pass the current category-chip and minimum-size
+    /// filters. The slider and chips re-filter this view in real time
+    /// without touching `largeFiles`, so the underlying scan result
+    /// survives both filter changes.
+    var visibleLargeFiles: [LargeFileEntry] {
+        largeFiles.filter { entry in
+            if entry.sizeBytes < largeFileMinimumBytes { return false }
+            if let cat = largeFileCategoryFilter, entry.category != cat { return false }
+            return true
+        }
+    }
+
+    /// Number of currently-visible entries the user has selected.
+    var largeFileSelectedCount: Int {
+        visibleLargeFiles.lazy.filter(\.isSelected).count
+    }
+
+    /// Bytes across every currently-visible selected entry.
+    var largeFileSelectedSize: Int64 {
+        visibleLargeFiles.lazy.filter(\.isSelected).map(\.sizeBytes).reduce(0, +)
+    }
+
+    /// Bytes across every visible entry, regardless of selection.
+    var largeFileVisibleSize: Int64 {
+        visibleLargeFiles.map(\.sizeBytes).reduce(0, +)
+    }
+
+    /// `true` when every currently-visible entry is selected
+    /// (and the visible list isn't empty). Drives the Select-All toggle.
+    var allLargeFilesSelected: Bool {
+        let visible = visibleLargeFiles
+        return !visible.isEmpty && visible.allSatisfy(\.isSelected)
+    }
+
+    // MARK: - Large-file flow
+
+    /// Kicks off the large-file scan and parks the result on
+    /// `largeFiles`. Resets the slider / chip filters back to
+    /// defaults so the user starts with the full ranked list.
+    func startLargeFileScan() async {
+        errorMessage = nil
+        largeFiles = []
+        largeFileCategoryFilter = nil
+        largeFileMinimumBytes = LargeFileScanner.defaultMinimumBytes
+        stage = .largeFileScanning
+
+        let scanned = await Task.detached(priority: .userInitiated) {
+            LargeFileScanner.scan()
+        }.value
+
+        largeFiles = scanned
+        stage = .largeFileResults
+    }
+
+    /// Flips a single large-file entry's selection. No-op for unknown ids.
+    func toggleLargeFile(id: URL) {
+        guard let i = largeFiles.firstIndex(where: { $0.id == id }) else { return }
+        largeFiles[i].isSelected.toggle()
+    }
+
+    /// Flips every currently-visible entry to/from selected based on
+    /// whether anything visible is currently unselected.
+    ///
+    /// Entries that the filters are hiding are left untouched so the
+    /// user can't accidentally select something they can't see.
+    func toggleAllLargeFiles() {
+        let visible = visibleLargeFiles
+        guard !visible.isEmpty else { return }
+        let target = !visible.allSatisfy(\.isSelected)
+        let visibleIDs = Set(visible.map(\.id))
+        for i in largeFiles.indices where visibleIDs.contains(largeFiles[i].id) {
+            largeFiles[i].isSelected = target
+        }
+    }
+
+    /// Moves every selected large-file entry to the Trash and transitions
+    /// to `.done`. No bundle-scoped side effects (no cfprefsd flush,
+    /// no TCC reset) — these aren't attributed to a single app, so
+    /// there's nothing to invalidate.
+    func confirmLargeFileCleanup() async {
+        let selected = largeFiles.filter(\.isSelected)
+        guard !selected.isEmpty else { return }
+        stage = .cleaning
+
+        let urls = selected.map(\.url)
+        let report = await trashURLs(urls)
         stage = .done(report)
     }
 
