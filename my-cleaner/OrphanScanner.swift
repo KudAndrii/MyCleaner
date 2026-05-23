@@ -355,7 +355,10 @@ enum OrphanScanner {
     /// Both sources contribute bundle IDs. Team IDs come from a code-sign
     /// read on every collected `.app` so the team-prefix Group Container
     /// check also works for apps reached only via Spotlight.
-    private nonisolated static func collectInstalledApps() -> (bundleIDs: Set<String>, teamIDs: Set<String>) {
+    ///
+    /// Exposed at file scope (rather than `private`) so the cache
+    /// scanner can reuse the same inventory.
+    nonisolated static func collectInstalledApps() -> (bundleIDs: Set<String>, teamIDs: Set<String>) {
         let fm = FileManager.default
         let roots: [URL] = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),

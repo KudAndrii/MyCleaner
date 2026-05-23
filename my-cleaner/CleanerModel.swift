@@ -37,6 +37,8 @@ final class CleanerModel {
         case done(CleanupReport)
         case orphanScanning
         case orphanResults
+        case cacheScanning
+        case cacheResults
     }
 
     // MARK: - Shared state
@@ -47,6 +49,7 @@ final class CleanerModel {
     var items: [RelatedItem] = []
     var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
+    var cacheGroups: [CacheGroup] = []
     var errorMessage: String?
     var isHovering: Bool = false
 
@@ -234,6 +237,7 @@ final class CleanerModel {
         systemExtensions = []
         currentTeamID = nil
         orphanGroups = []
+        cacheGroups = []
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -318,6 +322,73 @@ final class CleanerModel {
                 CleanupActions.resetTCC(forBundleID: bid)
             }
         }.value
+
+        stage = .done(report)
+    }
+
+    // MARK: - Cache selection (derived)
+
+    /// Items across every **selected** cache group.
+    var cacheSelectedCount: Int {
+        cacheGroups.reduce(0) { $0 + ($1.isSelected ? $1.entries.count : 0) }
+    }
+
+    /// Bytes across every **selected** cache group.
+    var cacheSelectedSize: Int64 {
+        cacheGroups.reduce(0) { $0 + ($1.isSelected ? $1.totalBytes : 0) }
+    }
+
+    /// Bytes across every cache group, regardless of selection.
+    var cacheTotalSize: Int64 {
+        cacheGroups.map(\.totalBytes).reduce(0, +)
+    }
+
+    /// `true` when every cache group is selected (and the list isn't empty).
+    var allCachesSelected: Bool {
+        !cacheGroups.isEmpty && cacheGroups.allSatisfy(\.isSelected)
+    }
+
+    // MARK: - Cache flow
+
+    /// Kicks off the standalone cache scan and parks the result on `cacheGroups`.
+    func startCacheScan() async {
+        errorMessage = nil
+        cacheGroups = []
+        stage = .cacheScanning
+
+        let result = await Task.detached(priority: .userInitiated) {
+            CacheScanner.scan()
+        }.value
+
+        cacheGroups = result.groups
+        stage = .cacheResults
+    }
+
+    /// Flips a single cache group's selection. No-op for unknown ids.
+    func toggleCacheGroup(id: String) {
+        guard let i = cacheGroups.firstIndex(where: { $0.id == id }) else { return }
+        cacheGroups[i].isSelected.toggle()
+    }
+
+    /// Flips every cache group to/from selected based on whether
+    /// anything is currently unselected.
+    func toggleAllCaches() {
+        let target = !allCachesSelected
+        for i in cacheGroups.indices { cacheGroups[i].isSelected = target }
+    }
+
+    /// Moves every entry in every selected cache group to the Trash.
+    ///
+    /// No post-trash side-effects: cache directories don't shadow
+    /// `cfprefsd` state, and the owning apps regenerate their caches
+    /// on next launch — which is the entire point of the feature.
+    func confirmCacheCleanup() async {
+        let selected = cacheGroups.filter(\.isSelected)
+        guard !selected.isEmpty else { return }
+        stage = .cleaning
+
+        let urls = selected.flatMap { $0.entries.map(\.url) }
+        let report = await trashURLs(urls)
 
         stage = .done(report)
     }
