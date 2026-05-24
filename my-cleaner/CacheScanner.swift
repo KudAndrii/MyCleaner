@@ -111,6 +111,33 @@ nonisolated struct CacheScanResult: Sendable {
     var totalSize: Int64 { groups.flatMap(\.entries).map(\.sizeBytes).reduce(0, +) }
 }
 
+/// One step in the cache scan, surfaced on the scanning screen as a
+/// structural progress list (user/system Library Caches first, then
+/// each well-known toolchain root).
+///
+/// The model owns `[CacheScanPhase]`, pre-populates it with every
+/// known phase in `.pending`, and flips entries to `.inProgress`
+/// and `.completed` as the scanner fires events.
+nonisolated struct CacheScanPhase: Identifiable, Hashable, Sendable {
+    /// Stable identifier used by the scanner / model handshake.
+    let id: String
+
+    /// Human-readable label shown in the scanning view.
+    let displayName: String
+
+    /// Current execution status.
+    var status: Status
+
+    /// Total surviving groups after this phase finished.
+    var groupsAfter: Int = 0
+
+    enum Status: Sendable, Hashable {
+        case pending
+        case inProgress
+        case completed
+    }
+}
+
 // MARK: - Scanner
 
 /// Finds oversized caches the user can wipe without removing the
@@ -121,6 +148,21 @@ enum CacheScanner {
     /// whose tree-sum is below this are dropped so the results list
     /// stays focused on hoarders and not OS noise.
     nonisolated static let defaultMinimumBytes: Int64 = 50 * 1024 * 1024
+
+    /// Phase-level event the scanner publishes so the scanning view
+    /// can render structural progress.
+    enum ScanEvent: Sendable {
+        case phaseStarted(id: String)
+        case phaseCompleted(id: String, groupsAfter: Int)
+    }
+
+    /// Stable identifiers for the two Library Caches phases. Matched
+    /// against the ids the model uses when pre-populating its phase
+    /// list. Well-known toolchain phases use the `WellKnownPath`'s
+    /// `relativePath` as the id so the model can pre-populate the
+    /// full list without duplicating the labels.
+    nonisolated static let userLibraryCachesPhaseID = "user-library-caches"
+    nonisolated static let systemLibraryCachesPhaseID = "system-library-caches"
 
     // MARK: Library roots
 
@@ -209,22 +251,40 @@ enum CacheScanner {
     /// Runs a full cache scan over every library root and well-known
     /// toolchain path.
     ///
-    /// - Parameter minimumBytes: Floor; entries (or non-expanded
-    ///   well-known roots) whose tree size is below this are dropped.
-    nonisolated static func scan(minimumBytes: Int64 = defaultMinimumBytes) -> CacheScanResult {
+    /// - Parameters:
+    ///   - minimumBytes: Floor; entries (or non-expanded well-known
+    ///     roots) whose tree size is below this are dropped.
+    ///   - onEvent: Optional callback invoked when the scanner enters
+    ///     and exits each phase. The model uses these to flip a
+    ///     `CacheScanPhase` from pending → inProgress → completed.
+    /// - Throws: `CancellationError` when the surrounding task is
+    ///   cancelled — checked before each library root and each
+    ///   well-known path so the Cancel button responds promptly.
+    nonisolated static func scan(
+        minimumBytes: Int64 = defaultMinimumBytes,
+        onEvent: (@Sendable (ScanEvent) -> Void)? = nil
+    ) async throws -> CacheScanResult {
         let installed = OrphanScanner.collectInstalledApps()
         var groups: [String: CacheGroup] = [:]
 
-        for root in libraryCacheRoots() {
+        let roots = libraryCacheRoots()
+        let phaseIDs = [userLibraryCachesPhaseID, systemLibraryCachesPhaseID]
+        for (idx, root) in roots.enumerated() {
+            try Task.checkCancellation()
+            let phaseID = phaseIDs[idx]
+            onEvent?(.phaseStarted(id: phaseID))
             scanCachesDirectory(
                 root,
                 minimumBytes: minimumBytes,
                 installedBundleIDs: installed.bundleIDs,
                 into: &groups
             )
+            onEvent?(.phaseCompleted(id: phaseID, groupsAfter: groups.count))
         }
 
         for path in wellKnownPaths() {
+            try Task.checkCancellation()
+            onEvent?(.phaseStarted(id: path.relativePath))
             if let group = scanWellKnownPath(path, minimumBytes: minimumBytes) {
                 // Same logical cache may show up under both buckets
                 // (e.g. Launch Services attributes `~/Library/Caches/com.apple.dt.Xcode`
@@ -232,6 +292,7 @@ enum CacheScanner {
                 // The well-known form is more useful — keep it.
                 groups[group.id] = group
             }
+            onEvent?(.phaseCompleted(id: path.relativePath, groupsAfter: groups.count))
         }
 
         let sorted = groups.values.sorted { $0.totalBytes > $1.totalBytes }

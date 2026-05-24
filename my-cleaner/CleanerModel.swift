@@ -50,6 +50,17 @@ final class CleanerModel {
     var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
     var cacheGroups: [CacheGroup] = []
+
+    /// Structural progress of the in-flight cache scan. One entry per
+    /// phase (user/system Library Caches + every well-known toolchain
+    /// root), pre-populated in `.pending` so the scanning view can
+    /// render the full step list immediately.
+    var cacheScanPhases: [CacheScanPhase] = []
+
+    /// The currently-running cache scan, kept around so the user can
+    /// cancel it from the scanning screen.
+    @ObservationIgnored
+    private var cacheScanTask: Task<Void, Never>?
     var errorMessage: String?
     var isHovering: Bool = false
 
@@ -238,6 +249,7 @@ final class CleanerModel {
         currentTeamID = nil
         orphanGroups = []
         cacheGroups = []
+        cacheScanPhases = []
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -350,18 +362,94 @@ final class CleanerModel {
 
     // MARK: - Cache flow
 
-    /// Kicks off the standalone cache scan and parks the result on `cacheGroups`.
-    func startCacheScan() async {
+    /// Kicks off the standalone cache scan and parks the result on
+    /// `cacheGroups`.
+    ///
+    /// Runs on a detached task tracked by `cacheScanTask` so
+    /// `cancelCacheScan()` can stop it mid-walk. Phase events flow
+    /// back to the main actor so the scanning view's structural
+    /// progress list can advance in real time.
+    func startCacheScan() {
         errorMessage = nil
         cacheGroups = []
+        cacheScanPhases = makeInitialCachePhases()
         stage = .cacheScanning
 
-        let result = await Task.detached(priority: .userInitiated) {
-            CacheScanner.scan()
-        }.value
+        let eventHandler: @Sendable (CacheScanner.ScanEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleCacheScanEvent(event)
+            }
+        }
 
-        cacheGroups = result.groups
-        stage = .cacheResults
+        cacheScanTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try await CacheScanner.scan(onEvent: eventHandler)
+                }.value
+                try Task.checkCancellation()
+                self.cacheGroups = result.groups
+                self.stage = .cacheResults
+                self.cacheScanTask = nil
+            } catch is CancellationError {
+                // Cancel already set `stage = .idle` in `cancelCacheScan()`.
+                return
+            } catch {
+                self.stage = .idle
+                self.cacheScanTask = nil
+            }
+        }
+    }
+
+    /// Cancels the in-progress cache scan, if any, and returns the UI
+    /// to the dropzone. Safe to call when nothing is running.
+    func cancelCacheScan() {
+        cacheScanTask?.cancel()
+        cacheScanTask = nil
+        cacheScanPhases = []
+        stage = .idle
+    }
+
+    /// Builds the initial `[CacheScanPhase]` list — user Library
+    /// Caches, system Library Caches, then one entry per well-known
+    /// toolchain root, all `.pending`.
+    private func makeInitialCachePhases() -> [CacheScanPhase] {
+        var phases: [CacheScanPhase] = [
+            CacheScanPhase(
+                id: CacheScanner.userLibraryCachesPhaseID,
+                displayName: "~/Library/Caches",
+                status: .pending
+            ),
+            CacheScanPhase(
+                id: CacheScanner.systemLibraryCachesPhaseID,
+                displayName: "/Library/Caches",
+                status: .pending
+            ),
+        ]
+        for path in CacheScanner.wellKnownPaths() {
+            phases.append(CacheScanPhase(
+                id: path.relativePath,
+                displayName: path.displayName,
+                status: .pending
+            ))
+        }
+        return phases
+    }
+
+    /// Maps a scanner event onto the matching phase entry.
+    private func handleCacheScanEvent(_ event: CacheScanner.ScanEvent) {
+        switch event {
+        case .phaseStarted(let id):
+            if let i = cacheScanPhases.firstIndex(where: { $0.id == id }) {
+                cacheScanPhases[i].status = .inProgress
+            }
+        case .phaseCompleted(let id, let groupsAfter):
+            if let i = cacheScanPhases.firstIndex(where: { $0.id == id }) {
+                cacheScanPhases[i].status = .completed
+                cacheScanPhases[i].groupsAfter = groupsAfter
+            }
+        }
     }
 
     /// Flips a single cache group's selection. No-op for unknown ids.

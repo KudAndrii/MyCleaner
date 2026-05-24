@@ -138,7 +138,7 @@ struct DropZoneView: View {
                 .help("Scan ~/Library for support files whose owning app is no longer installed.")
 
                 Button {
-                    Task { await model.startCacheScan() }
+                    model.startCacheScan()
                 } label: {
                     Label("Find oversized caches", systemImage: "externaldrive.badge.minus")
                         .padding(.horizontal, 6)

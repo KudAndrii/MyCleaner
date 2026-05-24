@@ -7,26 +7,118 @@ import SwiftUI
 import AppKit
 
 struct CacheScanningView: View {
+    @Bindable var model: CleanerModel
+
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 0) {
+            heading
+                .padding(.top, 28)
+                .padding(.bottom, 18)
+            ScrollView {
+                phaseList
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 8)
+            }
+            .frame(maxHeight: .infinity)
+            Divider()
+            Button(role: .cancel) {
+                model.cancelCacheScan()
+            } label: {
+                Text("Cancel")
+                    .frame(minWidth: 110)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.large)
+            .padding(.vertical, 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var heading: some View {
+        VStack(spacing: 6) {
             Image(systemName: "externaldrive.fill")
-                .font(.system(size: 72, weight: .light))
+                .font(.system(size: 44, weight: .light))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
-            ProgressView()
-                .controlSize(.large)
-            VStack(spacing: 4) {
-                Text("Measuring cache directories…")
-                    .font(.title3.weight(.semibold))
-                Text("Looking for apps and toolchains hoarding more than 50 MB of cache.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 460)
+            Text("Measuring cache directories…")
+                .font(.title3.weight(.semibold))
+            Text("\(completedCount) of \(model.cacheScanPhases.count) steps complete · \(totalGroups) \(totalGroups == 1 ? "candidate" : "candidates") so far")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+    }
+
+    private var phaseList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(model.cacheScanPhases.enumerated()), id: \.element.id) { idx, phase in
+                phaseRow(phase)
+                if idx < model.cacheScanPhases.count - 1 {
+                    Divider().padding(.leading, 38)
+                }
             }
         }
-        .padding(48)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 4)
+        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func phaseRow(_ phase: CacheScanPhase) -> some View {
+        HStack(spacing: 12) {
+            statusIcon(for: phase.status)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(phase.displayName)
+                    .font(.callout.weight(phase.status == .inProgress ? .semibold : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(statusDetail(for: phase))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func statusIcon(for status: CacheScanPhase.Status) -> some View {
+        switch status {
+        case .pending:
+            Image(systemName: "circle")
+                .font(.body)
+                .foregroundStyle(.tertiary)
+        case .inProgress:
+            ProgressView()
+                .controlSize(.small)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.body)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.green)
+        }
+    }
+
+    private func statusDetail(for phase: CacheScanPhase) -> String {
+        switch phase.status {
+        case .pending: "Waiting"
+        case .inProgress: "Scanning…"
+        case .completed: "\(phase.groupsAfter) \(phase.groupsAfter == 1 ? "candidate" : "candidates")"
+        }
+    }
+
+    private var completedCount: Int {
+        model.cacheScanPhases.filter { $0.status == .completed }.count
+    }
+
+    /// Running total of surviving cache groups so far. Each phase's
+    /// `groupsAfter` is the cumulative count *after* it finished, so
+    /// taking the max gives the latest snapshot.
+    private var totalGroups: Int {
+        model.cacheScanPhases.map(\.groupsAfter).max() ?? 0
     }
 }
 
@@ -161,15 +253,14 @@ struct CacheResultsView: View {
                     }
                     HStack(spacing: 6) {
                         kindBadge(for: group)
-                        if !group.isSafeToDelete {
-                            Label("Unattributed — review before trashing", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.orange)
-                        }
                         if isRunning(group) {
-                            Label("App is running", systemImage: "play.circle.fill")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.orange)
+                            badgeWithInfoHint(
+                                color: .orange,
+                                tooltip: "This app is open right now. Quit it before clearing its cache, otherwise the app may re-create the files mid-trash and waste your effort."
+                            ) {
+                                Label("App is running", systemImage: "play.circle.fill")
+                                    .font(.caption2.weight(.medium))
+                            }
                         }
                     }
                 }
@@ -253,22 +344,59 @@ struct CacheResultsView: View {
     private func kindBadge(for group: CacheGroup) -> some View {
         switch group.kind {
         case .installedApp:
-            Label("Installed app", systemImage: "checkmark.seal.fill")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.green)
+            badgeWithInfoHint(
+                color: .green,
+                tooltip: "A temporary-files folder belonging to an app you have installed. Safe to remove — the app rebuilds what it needs the next time you open it."
+            ) {
+                Label("App cache", systemImage: "checkmark.seal.fill")
+                    .font(.caption2.weight(.medium))
+            }
         case .orphanApp:
-            Label("Orphaned — app no longer installed", systemImage: "tray.2.fill")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.blue)
+            badgeWithInfoHint(
+                color: .blue,
+                tooltip: "This cache was created by an app that's no longer on your Mac. Nothing will ever read it again — safe to delete."
+            ) {
+                Label("App removed", systemImage: "tray.2.fill")
+                    .font(.caption2.weight(.medium))
+            }
         case .toolchain:
-            Label("Toolchain cache", systemImage: "hammer.fill")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.purple)
+            badgeWithInfoHint(
+                color: .purple,
+                tooltip: "A cache created by a developer tool (for example npm, Gradle, or Xcode). Safe to remove — the tool will re-download or rebuild what it needs the next time you use it."
+            ) {
+                Label("Developer tool cache", systemImage: "hammer.fill")
+                    .font(.caption2.weight(.medium))
+            }
         case .anonymous:
-            Label("Unattributed", systemImage: "questionmark.folder.fill")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
+            badgeWithInfoHint(
+                color: .orange,
+                tooltip: "We couldn't tell which app created this folder. If you don't recognise the name shown above, leave it unchecked — deleting unfamiliar caches can occasionally break an app."
+            ) {
+                Label("Unknown source — check before deleting", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2.weight(.medium))
+            }
         }
+    }
+
+    /// Wraps a coloured badge with a trailing `info.circle` icon and a
+    /// `.help()` tooltip, so the user has a visual cue that hovering
+    /// will reveal an explanation. The icon is dimmer than the badge
+    /// text so it reads as a secondary hint rather than another label.
+    @ViewBuilder
+    private func badgeWithInfoHint<C: ShapeStyle, Content: View>(
+        color: C,
+        tooltip: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 3) {
+            content()
+            Image(systemName: "info.circle")
+                .font(.caption2)
+                .imageScale(.small)
+                .opacity(0.7)
+        }
+        .foregroundStyle(color)
+        .help(tooltip)
     }
 
     private func entryRow(_ entry: CacheEntry) -> some View {

@@ -71,7 +71,7 @@ struct ContentView: View {
         case .orphanResults:
             OrphanResultsView(model: model)
         case .cacheScanning:
-            CacheScanningView()
+            CacheScanningView(model: model)
         case .cacheResults:
             CacheResultsView(model: model)
         }
