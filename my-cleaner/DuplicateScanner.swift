@@ -34,20 +34,27 @@ enum DuplicateScanner {
     /// Hash-pass read size. Picked to keep memory pressure low on
     /// multi-gigabyte files while still being large enough that the
     /// per-chunk overhead doesn't dominate small files.
-    private static let chunkSize = 4 * 1024 * 1024
+    nonisolated private static let chunkSize = 4 * 1024 * 1024
 
     /// Directory names the walk never descends into.
     ///
     /// `~/Library` is excluded explicitly because it's owned by the
     /// per-app and orphan flows; duplicate detection there would
     /// surface every framework, cache fragment, and preference plist.
-    private static let excludedDirectoryNames: Set<String> = ["Library"]
+    nonisolated private static let excludedDirectoryNames: Set<String> = ["Library"]
 
     /// Absolute path prefixes the walk never descends into.
     ///
     /// System volumes hold root-owned binaries the user can't safely
     /// touch even when the default scope doesn't include them.
-    private static let excludedPathPrefixes: [String] = [
+    ///
+    /// Note: `URL.standardizedFileURL` collapses `/private/var`,
+    /// `/private/etc`, `/private/tmp` to their bare `/var`, `/etc`,
+    /// `/tmp` forms on macOS — so callers asking about those specific
+    /// paths land outside this prefix list. `/var/folders/...` (the
+    /// system temp dir) is deliberately not excluded here so that
+    /// scoping a scan to a temp directory still works.
+    nonisolated private static let excludedPathPrefixes: [String] = [
         "/System", "/usr", "/bin", "/sbin", "/private", "/dev", "/Volumes"
     ]
 

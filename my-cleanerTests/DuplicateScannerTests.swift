@@ -52,7 +52,13 @@ struct DuplicateScannerHelpersTests {
         let library = home.appendingPathComponent("Library", isDirectory: true)
         #expect(DuplicateScanner.shouldSkipDirectory(library) == true)
         #expect(DuplicateScanner.shouldSkipDirectory(URL(fileURLWithPath: "/System/Library")) == true)
-        #expect(DuplicateScanner.shouldSkipDirectory(URL(fileURLWithPath: "/private/var")) == true)
+        // Use a /private subpath that has no corresponding top-level
+        // symlink — `/private/var`, `/private/etc`, `/private/tmp` all
+        // standardize back to `/var`, `/etc`, `/tmp` on macOS and
+        // bypass the `/private` prefix check, so we pick a made-up
+        // subdir that survives standardization.
+        let privateSub = URL(fileURLWithPath: "/private/\(UUID().uuidString)")
+        #expect(DuplicateScanner.shouldSkipDirectory(privateSub) == true)
         // A normal user folder should not be skipped.
         let downloads = home.appendingPathComponent("Downloads", isDirectory: true)
         #expect(DuplicateScanner.shouldSkipDirectory(downloads) == false)
