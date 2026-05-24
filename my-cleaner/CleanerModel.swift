@@ -50,6 +50,14 @@ final class CleanerModel {
     var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
     var duplicateGroups: [DuplicateGroup] = []
+
+    /// Throttled progress signal published by the in-flight duplicate
+    /// scan. `nil` when no scan is running; resets to `nil` after the
+    /// scan settles. The scanning view binds directly to this so the
+    /// UI can show file-counts and a determinate hash bar instead of
+    /// an opaque spinner.
+    var duplicateScanProgress: DuplicateScanner.Progress?
+
     var errorMessage: String?
     var isHovering: Bool = false
 
@@ -245,6 +253,7 @@ final class CleanerModel {
         duplicateGroups = []
         duplicateScanTask?.cancel()
         duplicateScanTask = nil
+        duplicateScanProgress = nil
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -370,18 +379,38 @@ final class CleanerModel {
     /// Kicks off the duplicate scan and parks the result on
     /// ``duplicateGroups``.
     ///
-    /// The detached task is stored on ``duplicateScanTask`` so a
-    /// concurrent ``cancelDuplicateScan()`` can interrupt the walk
-    /// mid-flight; the scanner itself yields to cooperative
-    /// cancellation between every file and every hash chunk so the
-    /// observable latency is sub-second.
+    /// Wires progress through an `AsyncStream` so the scanner can
+    /// emit throttled updates from its detached task without
+    /// reaching back to the main actor itself — a dedicated
+    /// main-actor consumer drains the stream into
+    /// ``duplicateScanProgress``. The detached task is stored on
+    /// ``duplicateScanTask`` so a concurrent
+    /// ``cancelDuplicateScan()`` can interrupt the walk mid-flight;
+    /// the scanner itself yields to cooperative cancellation between
+    /// every file and every hash chunk so the observable latency is
+    /// sub-second.
     func startDuplicateScan(scope: [URL]) async {
         errorMessage = nil
         duplicateGroups = []
+        duplicateScanProgress = .enumerating(filesSeen: 0)
         stage = .duplicateScanning
 
+        let (progressStream, continuation) = AsyncStream<DuplicateScanner.Progress>.makeStream()
+
+        // Main-actor consumer — folds progress events from the
+        // scanner thread into observable state. Exits when the
+        // scanner calls `finish()` on the continuation.
+        let progressTask = Task { @MainActor [weak self] in
+            for await update in progressStream {
+                self?.duplicateScanProgress = update
+            }
+        }
+
         let task = Task.detached(priority: .userInitiated) {
-            try await DuplicateScanner.scan(scope: scope)
+            defer { continuation.finish() }
+            return try await DuplicateScanner.scan(scope: scope) { progress in
+                continuation.yield(progress)
+            }
         }
         duplicateScanTask = task
 
@@ -400,7 +429,12 @@ final class CleanerModel {
             errorMessage = "Duplicate scan failed: \(error.localizedDescription)"
             stage = .idle
         }
+
+        // Ensure the consumer has drained and let go of the stream
+        // before we clear the published progress.
+        await progressTask.value
         if duplicateScanTask == task { duplicateScanTask = nil }
+        duplicateScanProgress = nil
     }
 
     /// Cancels the in-flight duplicate scan. No-op when no scan is

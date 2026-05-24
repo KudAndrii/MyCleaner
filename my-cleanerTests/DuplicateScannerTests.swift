@@ -217,7 +217,7 @@ struct DuplicateScannerScanTests {
         try FileManager.default.linkItem(at: a, to: b)
         let c = try dir.makeFile(at: "c.bin", contents: payload)
 
-        let unique = DuplicateScanner.dedupeByInode([a, b, c])
+        let unique = DuplicateScanner.dedupeByInode(paths: [a.path, b.path, c.path])
         // `a` and `b` are hardlinked — they should collapse to one
         // representative. `c` is a separate file on disk.
         #expect(unique.count == 2)
@@ -286,5 +286,104 @@ struct DuplicateScannerScanTests {
         #expect(groups.count == 1)
         let urls = groups.first?.copies.map(\.url.lastPathComponent).sorted() ?? []
         #expect(urls == ["outside-a.bin", "outside-b.bin"])
+    }
+
+    @Test("Partial-hash prefilter still groups large identical files together")
+    func partialHashCorrectness() async throws {
+        // Files large enough to land in the partial-then-full path
+        // (size > partialHashSize = 64 KB). Two pairs share content;
+        // a third file is unique but the same size as one of the pairs.
+        let dir = try TempDir(label: "dup-partial")
+        let large = 80 * 1024
+        let payloadA = Data(repeating: 0xAA, count: large)
+        let payloadB = Data(repeating: 0xBB, count: large)
+        _ = try dir.makeFile(at: "a1.bin", contents: payloadA)
+        _ = try dir.makeFile(at: "a2.bin", contents: payloadA)
+        _ = try dir.makeFile(at: "b1.bin", contents: payloadB)
+        _ = try dir.makeFile(at: "b2.bin", contents: payloadB)
+        _ = try dir.makeFile(at: "lonely.bin", contents: Data(repeating: 0xCC, count: large))
+
+        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        // Two duplicate groups, lonely.bin ruled out by the partial pass.
+        #expect(groups.count == 2)
+        let counts = groups.map(\.copies.count).sorted()
+        #expect(counts == [2, 2])
+    }
+
+    @Test("Partial-hash prefilter discriminates files with identical sizes but different content")
+    func partialHashSeparatesByPrefix() async throws {
+        // Two files of the same large size whose content differs only
+        // in the first 64 KB — the prefilter should still split them
+        // into separate groups (i.e. surface nothing).
+        let dir = try TempDir(label: "dup-prefix-only")
+        var a = Data(repeating: 0x11, count: 64 * 1024)
+        a.append(Data(repeating: 0x00, count: 32 * 1024))
+        var b = Data(repeating: 0x22, count: 64 * 1024)
+        b.append(Data(repeating: 0x00, count: 32 * 1024))
+        _ = try dir.makeFile(at: "a.bin", contents: a)
+        _ = try dir.makeFile(at: "b.bin", contents: b)
+
+        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        #expect(groups.isEmpty)
+    }
+
+    @Test("Scanner emits progress for both enumeration and hashing phases")
+    func progressCallback() async throws {
+        let dir = try TempDir(label: "dup-progress")
+        // Plenty of small files so we get enumeration emissions.
+        for i in 0..<24 {
+            let payload = Data(repeating: UInt8(i + 1), count: 256)
+            _ = try dir.makeFile(at: "a-\(i).bin", contents: payload)
+        }
+        // A couple of duplicate pairs so the hash phase has work.
+        let dupePayload = Data(repeating: 0xDD, count: 256)
+        _ = try dir.makeFile(at: "dup-a.bin", contents: dupePayload)
+        _ = try dir.makeFile(at: "dup-b.bin", contents: dupePayload)
+
+        let updates = ProgressCollector()
+        _ = try await DuplicateScanner.scan(scope: [dir.url]) { update in
+            updates.append(update)
+        }
+
+        let collected = updates.snapshot()
+        // Enumeration phase: at least one update with filesSeen > 0.
+        #expect(collected.contains { update in
+            if case .enumerating(let n) = update { return n > 0 }
+            return false
+        })
+        // Hash phase: at least one update.
+        #expect(collected.contains { update in
+            if case .hashing = update { return true }
+            return false
+        })
+        // Final hash update should report all candidates hashed.
+        let finalHashing = collected.reversed().first(where: { update in
+            if case .hashing = update { return true }
+            return false
+        })
+        if case .hashing(let done, let total) = finalHashing {
+            #expect(done == total)
+            #expect(total > 0)
+        } else {
+            Issue.record("expected a final .hashing update with done == total")
+        }
+    }
+}
+
+/// Lock-protected sink for ``DuplicateScanner.Progress`` events
+/// observed across the scanner's detached task. Lets the test
+/// thread snapshot the full stream after the scan finishes.
+private final class ProgressCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [DuplicateScanner.Progress] = []
+
+    func append(_ event: DuplicateScanner.Progress) {
+        lock.lock(); defer { lock.unlock() }
+        events.append(event)
+    }
+
+    func snapshot() -> [DuplicateScanner.Progress] {
+        lock.lock(); defer { lock.unlock() }
+        return events
     }
 }

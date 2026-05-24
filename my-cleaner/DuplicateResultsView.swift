@@ -6,9 +6,11 @@
 import SwiftUI
 import AppKit
 
-/// In-flight state for the duplicate scan. Surfaces a spinner plus a
-/// Cancel button so the user can bail out of a long hash pass without
-/// waiting for the whole scope to finish.
+/// In-flight state for the duplicate scan. Renders the scanner's
+/// throttled ``DuplicateScanner/Progress`` signal as a file-count
+/// during enumeration and a determinate bar during the hash pass,
+/// with a Cancel button so the user can bail out without waiting
+/// for the whole scope to finish.
 struct DuplicateScanningView: View {
     @Bindable var model: CleanerModel
 
@@ -18,17 +20,21 @@ struct DuplicateScanningView: View {
                 .font(.system(size: 72, weight: .light))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
-            ProgressView()
-                .controlSize(.large)
+
+            progressIndicator
+                .frame(maxWidth: 360)
+
             VStack(spacing: 4) {
-                Text("Looking for duplicate files…")
+                Text(headlineText)
                     .font(.title3.weight(.semibold))
-                Text("Comparing every file by size first, then by content. Large folders can take a minute.")
+                Text(subtitleText)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 440)
+                    .monospacedDigit()
             }
+
             Button(role: .cancel) {
                 model.cancelDuplicateScan()
             } label: {
@@ -41,6 +47,40 @@ struct DuplicateScanningView: View {
         }
         .padding(48)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var progressIndicator: some View {
+        switch model.duplicateScanProgress {
+        case .hashing(let done, let total) where total > 0:
+            ProgressView(value: Double(done), total: Double(total))
+                .progressViewStyle(.linear)
+        default:
+            ProgressView()
+                .controlSize(.large)
+        }
+    }
+
+    private var headlineText: String {
+        switch model.duplicateScanProgress {
+        case .enumerating: "Scanning files…"
+        case .hashing: "Comparing content…"
+        case .none: "Looking for duplicate files…"
+        }
+    }
+
+    private var subtitleText: String {
+        switch model.duplicateScanProgress {
+        case .enumerating(let n):
+            return "Visited \(n.formatted()) \(n == 1 ? "file" : "files") so far."
+        case .hashing(let done, let total) where total > 0:
+            let pct = Int((Double(done) / Double(total)) * 100)
+            return "Hashed \(done.formatted()) of \(total.formatted()) candidates (\(pct)%)."
+        case .hashing:
+            return "Hashing same-size candidates…"
+        case .none:
+            return "Comparing every file by size first, then by content. Large folders can take a minute."
+        }
     }
 }
 
