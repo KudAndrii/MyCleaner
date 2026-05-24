@@ -48,6 +48,8 @@ struct ContentView: View {
         case .largeFileResults: 8
         case .cacheScanning: 9
         case .cacheResults: 10
+        case .duplicateScanning: 11
+        case .duplicateResults: 12
         }
     }
 
@@ -80,6 +82,10 @@ struct ContentView: View {
             CacheScanningView(model: model)
         case .cacheResults:
             CacheResultsView(model: model)
+        case .duplicateScanning:
+            DuplicateScanningView(model: model)
+        case .duplicateResults:
+            DuplicateResultsView(model: model)
         }
     }
 

@@ -41,6 +41,8 @@ final class CleanerModel {
         case largeFileResults
         case cacheScanning
         case cacheResults
+        case duplicateScanning
+        case duplicateResults
     }
 
     // MARK: - Shared state
@@ -53,6 +55,7 @@ final class CleanerModel {
     var orphanGroups: [OrphanGroup] = []
     var largeFiles: [LargeFileEntry] = []
     var cacheGroups: [CacheGroup] = []
+    var duplicateGroups: [DuplicateGroup] = []
 
     /// User-controlled minimum-size filter for the large-file view.
     /// Drives the slider in `LargeFileResultsView` and re-narrows the
@@ -96,8 +99,27 @@ final class CleanerModel {
     @ObservationIgnored
     private var cacheScanTask: Task<Void, Never>?
 
+    /// Throttled progress signal published by the in-flight duplicate
+    /// scan. `nil` when no scan is running; resets to `nil` after the
+    /// scan settles. The scanning view binds directly to this so the
+    /// UI can show file-counts and a determinate hash bar instead of
+    /// an opaque spinner.
+    var duplicateScanProgress: DuplicateScanner.Progress?
+
+    /// Structural progress of the in-flight duplicate scan. One entry
+    /// per selected scope folder + one for the hashing pass. Folder
+    /// entries flip through pending → inProgress → completed as the
+    /// walker visits each root; the hash entry tracks
+    /// `filesHashed / totalToHash`.
+    var duplicateScanPhases: [DuplicateScanPhase] = []
+
     var errorMessage: String?
     var isHovering: Bool = false
+
+    /// Cancellation handle for the in-flight duplicate scan, if any.
+    /// Stored so the UI can call ``cancelDuplicateScan()`` from the
+    /// scanning view without coordinating Task identity through state.
+    private var duplicateScanTask: Task<[DuplicateGroup], Error>?
 
     // MARK: - Login items (opt-in)
 
@@ -290,6 +312,11 @@ final class CleanerModel {
         largeFileScanPhases = []
         cacheGroups = []
         cacheScanPhases = []
+        duplicateGroups = []
+        duplicateScanTask?.cancel()
+        duplicateScanTask = nil
+        duplicateScanProgress = nil
+        duplicateScanPhases = []
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -416,26 +443,6 @@ final class CleanerModel {
 
     // MARK: - Large-file flow
 
-    /// Kicks off the large-file scan and parks the result on
-    /// `largeFiles`. Resets the chip filter back to the default so
-    /// the user starts with the full ranked list. The
-    /// `largeFileMinimumBytes` filter is initialised to the same
-    /// floor the scan used so the in-results slider doesn't hide
-    /// surviving entries by default.
-    ///
-    /// - Parameters:
-    ///   - minimumBytes: Smallest size to surface. Used both as the
-    ///     Spotlight floor and the slider's starting position so the
-    ///     in-results filter never hides items the scan itself
-    ///     accepted.
-    ///   - nests: Targeted nests to walk after the Spotlight pass.
-    ///     `nil` walks every nest `LargeFileScanner` knows about.
-    ///
-    /// The scan runs on a detached task tracked by
-    /// `largeFileScanTask` so `cancelLargeFileScan()` can stop it
-    /// mid-walk. Phase events flow back to the main actor so the
-    /// scanning view's structural progress list can advance in
-    /// real time.
     func startLargeFileScan(
         minimumBytes: Int64 = LargeFileScanner.defaultMinimumBytes,
         nests: [LargeFileNest]? = nil
@@ -471,7 +478,6 @@ final class CleanerModel {
                 self.stage = .largeFileResults
                 self.largeFileScanTask = nil
             } catch is CancellationError {
-                // Cancel already set `stage = .idle` in `cancelLargeFileScan()`.
                 return
             } catch {
                 self.stage = .idle
@@ -480,8 +486,6 @@ final class CleanerModel {
         }
     }
 
-    /// Cancels the in-progress large-file scan, if any, and returns
-    /// the UI to the dropzone. Safe to call when nothing is running.
     func cancelLargeFileScan() {
         largeFileScanTask?.cancel()
         largeFileScanTask = nil
@@ -489,10 +493,6 @@ final class CleanerModel {
         stage = .idle
     }
 
-    /// Updates the size floor and, if the currently-selected category
-    /// chip has no surviving entries at the new floor, falls back to
-    /// "All" so the user doesn't stare at an empty list with a hidden
-    /// filter still applied.
     func setLargeFileMinimumBytes(_ bytes: Int64) {
         largeFileMinimumBytes = bytes
         if let category = largeFileCategoryFilter,
@@ -501,9 +501,6 @@ final class CleanerModel {
         }
     }
 
-    /// Builds the initial `[LargeFileScanPhase]` list (Spotlight first,
-    /// then one entry per nest the user kept selected). Surfaced as a
-    /// helper so `startLargeFileScan` stays a linear read.
     private func makeInitialLargeFilePhases(nests: [LargeFileNest]) -> [LargeFileScanPhase] {
         var phases: [LargeFileScanPhase] = [
             LargeFileScanPhase(
@@ -522,7 +519,6 @@ final class CleanerModel {
         return phases
     }
 
-    /// Maps a large-file scanner event onto the matching phase entry.
     private func handleLargeFileScanEvent(_ event: LargeFileScanner.ScanEvent) {
         switch event {
         case .phaseStarted(let id):
@@ -537,17 +533,11 @@ final class CleanerModel {
         }
     }
 
-    /// Flips a single large-file entry's selection. No-op for unknown ids.
     func toggleLargeFile(id: URL) {
         guard let i = largeFiles.firstIndex(where: { $0.id == id }) else { return }
         largeFiles[i].isSelected.toggle()
     }
 
-    /// Flips every currently-visible entry to/from selected based on
-    /// whether anything visible is currently unselected.
-    ///
-    /// Entries that the filters are hiding are left untouched so the
-    /// user can't accidentally select something they can't see.
     func toggleAllLargeFiles() {
         let visible = visibleLargeFiles
         guard !visible.isEmpty else { return }
@@ -558,10 +548,6 @@ final class CleanerModel {
         }
     }
 
-    /// Moves every selected large-file entry to the Trash and transitions
-    /// to `.done`. No bundle-scoped side effects (no cfprefsd flush,
-    /// no TCC reset) — these aren't attributed to a single app, so
-    /// there's nothing to invalidate.
     func confirmLargeFileCleanup() async {
         let selected = largeFiles.filter(\.isSelected)
         guard !selected.isEmpty else { return }
@@ -596,13 +582,6 @@ final class CleanerModel {
 
     // MARK: - Cache flow
 
-    /// Kicks off the standalone cache scan and parks the result on
-    /// `cacheGroups`.
-    ///
-    /// Runs on a detached task tracked by `cacheScanTask` so
-    /// `cancelCacheScan()` can stop it mid-walk. Phase events flow
-    /// back to the main actor so the scanning view's structural
-    /// progress list can advance in real time.
     func startCacheScan() {
         errorMessage = nil
         cacheGroups = []
@@ -627,7 +606,6 @@ final class CleanerModel {
                 self.stage = .cacheResults
                 self.cacheScanTask = nil
             } catch is CancellationError {
-                // Cancel already set `stage = .idle` in `cancelCacheScan()`.
                 return
             } catch {
                 self.stage = .idle
@@ -636,8 +614,6 @@ final class CleanerModel {
         }
     }
 
-    /// Cancels the in-progress cache scan, if any, and returns the UI
-    /// to the dropzone. Safe to call when nothing is running.
     func cancelCacheScan() {
         cacheScanTask?.cancel()
         cacheScanTask = nil
@@ -645,9 +621,6 @@ final class CleanerModel {
         stage = .idle
     }
 
-    /// Builds the initial `[CacheScanPhase]` list — user Library
-    /// Caches, system Library Caches, then one entry per well-known
-    /// toolchain root, all `.pending`.
     private func makeInitialCachePhases() -> [CacheScanPhase] {
         var phases: [CacheScanPhase] = [
             CacheScanPhase(
@@ -671,7 +644,6 @@ final class CleanerModel {
         return phases
     }
 
-    /// Maps a cache scanner event onto the matching phase entry.
     private func handleCacheScanEvent(_ event: CacheScanner.ScanEvent) {
         switch event {
         case .phaseStarted(let id):
@@ -686,24 +658,16 @@ final class CleanerModel {
         }
     }
 
-    /// Flips a single cache group's selection. No-op for unknown ids.
     func toggleCacheGroup(id: String) {
         guard let i = cacheGroups.firstIndex(where: { $0.id == id }) else { return }
         cacheGroups[i].isSelected.toggle()
     }
 
-    /// Flips every cache group to/from selected based on whether
-    /// anything is currently unselected.
     func toggleAllCaches() {
         let target = !allCachesSelected
         for i in cacheGroups.indices { cacheGroups[i].isSelected = target }
     }
 
-    /// Moves every entry in every selected cache group to the Trash.
-    ///
-    /// No post-trash side-effects: cache directories don't shadow
-    /// `cfprefsd` state, and the owning apps regenerate their caches
-    /// on next launch — which is the entire point of the feature.
     func confirmCacheCleanup() async {
         let selected = cacheGroups.filter(\.isSelected)
         guard !selected.isEmpty else { return }
@@ -712,6 +676,181 @@ final class CleanerModel {
         let urls = selected.flatMap { $0.entries.map(\.url) }
         let report = await trashURLs(urls)
 
+        stage = .done(report)
+    }
+
+    // MARK: - Duplicate selection (derived)
+
+    /// Total number of copies the user has selected for deletion
+    /// across every duplicate group.
+    var duplicateSelectedCount: Int {
+        duplicateGroups.reduce(0) { acc, group in
+            acc + group.copies.lazy.filter(\.isSelectedForDeletion).count
+        }
+    }
+
+    /// Bytes the user would recover by trashing the currently
+    /// selected copies — `sum(sizePerCopy × selectedCopies)` across
+    /// every group.
+    var duplicateSelectedSize: Int64 {
+        duplicateGroups.reduce(0) { $0 + $1.wastedBytes }
+    }
+
+    /// Maximum recoverable bytes across every group — `wastedBytes`
+    /// summed with one copy kept per group. Used by the results
+    /// header so the user can see how much is reachable in total
+    /// independently of their current selection.
+    var duplicateMaximumRecoverableBytes: Int64 {
+        duplicateGroups.reduce(0) { $0 + $1.maximumRecoverableBytes }
+    }
+
+    /// Total distinct file copies across every duplicate group,
+    /// regardless of selection. Used by the empty-state and
+    /// header strings.
+    var duplicateTotalCopies: Int {
+        duplicateGroups.reduce(0) { $0 + $1.copies.count }
+    }
+
+    // MARK: - Duplicate flow
+
+    /// Kicks off the duplicate scan and parks the result on
+    /// ``duplicateGroups``.
+    func startDuplicateScan(
+        scope: [URL],
+        minimumBytes: Int64 = DuplicateScanner.defaultMinimumBytes
+    ) async {
+        errorMessage = nil
+        duplicateGroups = []
+        duplicateScanProgress = nil
+        duplicateScanPhases = makeInitialDuplicatePhases(scope: scope)
+        stage = .duplicateScanning
+
+        let (progressStream, continuation) = AsyncStream<DuplicateScanner.Progress>.makeStream()
+
+        let progressTask = Task { @MainActor [weak self] in
+            for await update in progressStream {
+                self?.duplicateScanProgress = update
+                self?.handleDuplicateScanEvent(update)
+            }
+        }
+
+        let task = Task.detached(priority: .userInitiated) {
+            defer { continuation.finish() }
+            return try await DuplicateScanner.scan(scope: scope, minimumBytes: minimumBytes) { progress in
+                continuation.yield(progress)
+            }
+        }
+        duplicateScanTask = task
+
+        do {
+            let groups = try await task.value
+            guard duplicateScanTask == task else { return }
+            duplicateGroups = groups
+            stage = .duplicateResults
+        } catch is CancellationError {
+            if stage == .duplicateScanning { stage = .idle }
+        } catch {
+            errorMessage = "Duplicate scan failed: \(error.localizedDescription)"
+            stage = .idle
+        }
+
+        await progressTask.value
+        if duplicateScanTask == task { duplicateScanTask = nil }
+        duplicateScanProgress = nil
+    }
+
+    func cancelDuplicateScan() {
+        duplicateScanTask?.cancel()
+    }
+
+    /// Builds the initial `[DuplicateScanPhase]` list — one entry per
+    /// selected scope folder + a "Comparing content" entry for the
+    /// hash pass.
+    private func makeInitialDuplicatePhases(scope: [URL]) -> [DuplicateScanPhase] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var phases: [DuplicateScanPhase] = scope.map { url in
+            let path = url.standardizedFileURL.path
+            let display: String
+            if path.hasPrefix(home) {
+                display = "~" + path.dropFirst(home.count)
+            } else {
+                display = path
+            }
+            return DuplicateScanPhase(
+                id: path,
+                displayName: display,
+                status: .pending
+            )
+        }
+        phases.append(DuplicateScanPhase(
+            id: DuplicateScanner.hashPhaseID,
+            displayName: "Comparing content",
+            status: .pending
+        ))
+        return phases
+    }
+
+    /// Maps a duplicate scanner event onto the matching phase entry.
+    private func handleDuplicateScanEvent(_ event: DuplicateScanner.Progress) {
+        switch event {
+        case .folderStarted(let id):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == id }) {
+                duplicateScanPhases[i].status = .inProgress
+            }
+        case .enumerating(let folderID, let filesSeen):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == folderID }) {
+                duplicateScanPhases[i].counter = filesSeen
+            }
+        case .folderCompleted(let id, let filesSeen):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == id }) {
+                duplicateScanPhases[i].status = .completed
+                duplicateScanPhases[i].counter = filesSeen
+            }
+        case .hashStarted(let totalToHash):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == DuplicateScanner.hashPhaseID }) {
+                duplicateScanPhases[i].status = .inProgress
+                duplicateScanPhases[i].counterTotal = totalToHash
+            }
+        case .hashing(let filesHashed, let totalToHash):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == DuplicateScanner.hashPhaseID }) {
+                duplicateScanPhases[i].counter = filesHashed
+                duplicateScanPhases[i].counterTotal = totalToHash
+                if totalToHash > 0 && filesHashed >= totalToHash {
+                    duplicateScanPhases[i].status = .completed
+                }
+            }
+        }
+    }
+
+    func toggleDuplicateCopy(groupID: UUID, copyID: UUID) {
+        guard let gi = duplicateGroups.firstIndex(where: { $0.id == groupID }),
+              let ci = duplicateGroups[gi].copies.firstIndex(where: { $0.id == copyID })
+        else { return }
+
+        let currentlySelected = duplicateGroups[gi].copies[ci].isSelectedForDeletion
+        if !currentlySelected {
+            let othersKept = duplicateGroups[gi].copies.enumerated().contains { idx, copy in
+                idx != ci && !copy.isSelectedForDeletion
+            }
+            guard othersKept else { return }
+        }
+        duplicateGroups[gi].copies[ci].isSelectedForDeletion.toggle()
+    }
+
+    func canDeselectDuplicateCopy(groupID: UUID, copyID: UUID) -> Bool {
+        guard let group = duplicateGroups.first(where: { $0.id == groupID }) else { return false }
+        guard let copy = group.copies.first(where: { $0.id == copyID }) else { return false }
+        if copy.isSelectedForDeletion { return true }
+        return group.copies.contains { $0.id != copyID && !$0.isSelectedForDeletion }
+    }
+
+    func confirmDuplicateCleanup() async {
+        let urls = duplicateGroups.flatMap { group in
+            group.copies.filter(\.isSelectedForDeletion).map(\.url)
+        }
+        guard !urls.isEmpty else { return }
+        stage = .cleaning
+        let report = await trashURLs(urls)
         stage = .done(report)
     }
 

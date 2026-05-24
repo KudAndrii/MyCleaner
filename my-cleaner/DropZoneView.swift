@@ -13,6 +13,8 @@ struct DropZoneView: View {
     var onReviewPermissions: () -> Void
 
     @State private var showLargeFileScope = false
+    @State private var showDuplicateOptions = false
+    @State private var duplicateScope: Set<DuplicateScopeFolder> = Set(DuplicateScopeFolder.allCases)
 
     var body: some View {
         VStack(spacing: 14) {
@@ -32,6 +34,15 @@ struct DropZoneView: View {
         }
         .sheet(isPresented: $showLargeFileScope) {
             LargeFileScopeView(model: model, isPresented: $showLargeFileScope)
+        }
+        .sheet(isPresented: $showDuplicateOptions) {
+            DuplicateScopeView(
+                selection: $duplicateScope,
+                isPresented: $showDuplicateOptions
+            ) { urls, minimumBytes in
+                showDuplicateOptions = false
+                Task { await model.startDuplicateScan(scope: urls, minimumBytes: minimumBytes) }
+            }
         }
     }
 
@@ -161,6 +172,16 @@ struct DropZoneView: View {
                 .buttonStyle(.glass)
                 .controlSize(.large)
                 .help("Surface large app and toolchain caches you can wipe without removing the app.")
+
+                Button {
+                    showDuplicateOptions = true
+                } label: {
+                    Label("Find duplicate files", systemImage: "doc.on.doc")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .help("Compare files in your folders by exact content and surface redundant copies.")
             }
 
             if let error = model.errorMessage {
