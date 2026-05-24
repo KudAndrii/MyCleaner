@@ -39,6 +39,8 @@ final class CleanerModel {
         case orphanResults
         case largeFileScanning
         case largeFileResults
+        case cacheScanning
+        case cacheResults
     }
 
     // MARK: - Shared state
@@ -50,6 +52,7 @@ final class CleanerModel {
     var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
     var largeFiles: [LargeFileEntry] = []
+    var cacheGroups: [CacheGroup] = []
 
     /// User-controlled minimum-size filter for the large-file view.
     /// Drives the slider in `LargeFileResultsView` and re-narrows the
@@ -81,6 +84,17 @@ final class CleanerModel {
     /// can cancel it from the scanning screen.
     @ObservationIgnored
     private var largeFileScanTask: Task<Void, Never>?
+
+    /// Structural progress of the in-flight cache scan. One entry per
+    /// phase (user/system Library Caches + every well-known toolchain
+    /// root), pre-populated in `.pending` so the scanning view can
+    /// render the full step list immediately.
+    var cacheScanPhases: [CacheScanPhase] = []
+
+    /// The currently-running cache scan, kept around so the user can
+    /// cancel it from the scanning screen.
+    @ObservationIgnored
+    private var cacheScanTask: Task<Void, Never>?
 
     var errorMessage: String?
     var isHovering: Bool = false
@@ -274,6 +288,8 @@ final class CleanerModel {
         largeFileMinimumBytes = LargeFileScanner.defaultMinimumBytes
         largeFileScanFloorBytes = LargeFileScanner.defaultMinimumBytes
         largeFileScanPhases = []
+        cacheGroups = []
+        cacheScanPhases = []
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -430,13 +446,13 @@ final class CleanerModel {
         largeFileMinimumBytes = minimumBytes
         largeFileScanFloorBytes = minimumBytes
         let walkNests = nests ?? LargeFileScanner.availableNests()
-        largeFileScanPhases = makeInitialPhases(nests: walkNests)
+        largeFileScanPhases = makeInitialLargeFilePhases(nests: walkNests)
         stage = .largeFileScanning
 
         let eventHandler: @Sendable (LargeFileScanner.ScanEvent) -> Void = { [weak self] event in
             guard let self else { return }
             Task { @MainActor in
-                self.handleScanEvent(event)
+                self.handleLargeFileScanEvent(event)
             }
         }
 
@@ -488,7 +504,7 @@ final class CleanerModel {
     /// Builds the initial `[LargeFileScanPhase]` list (Spotlight first,
     /// then one entry per nest the user kept selected). Surfaced as a
     /// helper so `startLargeFileScan` stays a linear read.
-    private func makeInitialPhases(nests: [LargeFileNest]) -> [LargeFileScanPhase] {
+    private func makeInitialLargeFilePhases(nests: [LargeFileNest]) -> [LargeFileScanPhase] {
         var phases: [LargeFileScanPhase] = [
             LargeFileScanPhase(
                 id: LargeFileScanner.spotlightPhaseID,
@@ -506,8 +522,8 @@ final class CleanerModel {
         return phases
     }
 
-    /// Maps a scanner event onto the matching phase entry.
-    private func handleScanEvent(_ event: LargeFileScanner.ScanEvent) {
+    /// Maps a large-file scanner event onto the matching phase entry.
+    private func handleLargeFileScanEvent(_ event: LargeFileScanner.ScanEvent) {
         switch event {
         case .phaseStarted(let id):
             if let i = largeFileScanPhases.firstIndex(where: { $0.id == id }) {
@@ -553,6 +569,149 @@ final class CleanerModel {
 
         let urls = selected.map(\.url)
         let report = await trashURLs(urls)
+        stage = .done(report)
+    }
+
+    // MARK: - Cache selection (derived)
+
+    /// Items across every **selected** cache group.
+    var cacheSelectedCount: Int {
+        cacheGroups.reduce(0) { $0 + ($1.isSelected ? $1.entries.count : 0) }
+    }
+
+    /// Bytes across every **selected** cache group.
+    var cacheSelectedSize: Int64 {
+        cacheGroups.reduce(0) { $0 + ($1.isSelected ? $1.totalBytes : 0) }
+    }
+
+    /// Bytes across every cache group, regardless of selection.
+    var cacheTotalSize: Int64 {
+        cacheGroups.map(\.totalBytes).reduce(0, +)
+    }
+
+    /// `true` when every cache group is selected (and the list isn't empty).
+    var allCachesSelected: Bool {
+        !cacheGroups.isEmpty && cacheGroups.allSatisfy(\.isSelected)
+    }
+
+    // MARK: - Cache flow
+
+    /// Kicks off the standalone cache scan and parks the result on
+    /// `cacheGroups`.
+    ///
+    /// Runs on a detached task tracked by `cacheScanTask` so
+    /// `cancelCacheScan()` can stop it mid-walk. Phase events flow
+    /// back to the main actor so the scanning view's structural
+    /// progress list can advance in real time.
+    func startCacheScan() {
+        errorMessage = nil
+        cacheGroups = []
+        cacheScanPhases = makeInitialCachePhases()
+        stage = .cacheScanning
+
+        let eventHandler: @Sendable (CacheScanner.ScanEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleCacheScanEvent(event)
+            }
+        }
+
+        cacheScanTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try await CacheScanner.scan(onEvent: eventHandler)
+                }.value
+                try Task.checkCancellation()
+                self.cacheGroups = result.groups
+                self.stage = .cacheResults
+                self.cacheScanTask = nil
+            } catch is CancellationError {
+                // Cancel already set `stage = .idle` in `cancelCacheScan()`.
+                return
+            } catch {
+                self.stage = .idle
+                self.cacheScanTask = nil
+            }
+        }
+    }
+
+    /// Cancels the in-progress cache scan, if any, and returns the UI
+    /// to the dropzone. Safe to call when nothing is running.
+    func cancelCacheScan() {
+        cacheScanTask?.cancel()
+        cacheScanTask = nil
+        cacheScanPhases = []
+        stage = .idle
+    }
+
+    /// Builds the initial `[CacheScanPhase]` list — user Library
+    /// Caches, system Library Caches, then one entry per well-known
+    /// toolchain root, all `.pending`.
+    private func makeInitialCachePhases() -> [CacheScanPhase] {
+        var phases: [CacheScanPhase] = [
+            CacheScanPhase(
+                id: CacheScanner.userLibraryCachesPhaseID,
+                displayName: "~/Library/Caches",
+                status: .pending
+            ),
+            CacheScanPhase(
+                id: CacheScanner.systemLibraryCachesPhaseID,
+                displayName: "/Library/Caches",
+                status: .pending
+            ),
+        ]
+        for path in CacheScanner.wellKnownPaths() {
+            phases.append(CacheScanPhase(
+                id: path.relativePath,
+                displayName: path.displayName,
+                status: .pending
+            ))
+        }
+        return phases
+    }
+
+    /// Maps a cache scanner event onto the matching phase entry.
+    private func handleCacheScanEvent(_ event: CacheScanner.ScanEvent) {
+        switch event {
+        case .phaseStarted(let id):
+            if let i = cacheScanPhases.firstIndex(where: { $0.id == id }) {
+                cacheScanPhases[i].status = .inProgress
+            }
+        case .phaseCompleted(let id, let groupsAfter):
+            if let i = cacheScanPhases.firstIndex(where: { $0.id == id }) {
+                cacheScanPhases[i].status = .completed
+                cacheScanPhases[i].groupsAfter = groupsAfter
+            }
+        }
+    }
+
+    /// Flips a single cache group's selection. No-op for unknown ids.
+    func toggleCacheGroup(id: String) {
+        guard let i = cacheGroups.firstIndex(where: { $0.id == id }) else { return }
+        cacheGroups[i].isSelected.toggle()
+    }
+
+    /// Flips every cache group to/from selected based on whether
+    /// anything is currently unselected.
+    func toggleAllCaches() {
+        let target = !allCachesSelected
+        for i in cacheGroups.indices { cacheGroups[i].isSelected = target }
+    }
+
+    /// Moves every entry in every selected cache group to the Trash.
+    ///
+    /// No post-trash side-effects: cache directories don't shadow
+    /// `cfprefsd` state, and the owning apps regenerate their caches
+    /// on next launch — which is the entire point of the feature.
+    func confirmCacheCleanup() async {
+        let selected = cacheGroups.filter(\.isSelected)
+        guard !selected.isEmpty else { return }
+        stage = .cleaning
+
+        let urls = selected.flatMap { $0.entries.map(\.url) }
+        let report = await trashURLs(urls)
+
         stage = .done(report)
     }
 

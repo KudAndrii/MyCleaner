@@ -151,6 +151,16 @@ struct DropZoneView: View {
                 .buttonStyle(.glass)
                 .controlSize(.large)
                 .help("Rank the biggest files and bundles in your home directory for one-click cleanup.")
+
+                Button {
+                    model.startCacheScan()
+                } label: {
+                    Label("Find oversized caches", systemImage: "externaldrive.badge.minus")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .help("Surface large app and toolchain caches you can wipe without removing the app.")
             }
 
             if let error = model.errorMessage {
