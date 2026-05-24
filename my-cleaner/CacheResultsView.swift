@@ -71,7 +71,8 @@ struct CacheResultsView: View {
     private var hasRunningSelection: Bool {
         let running = runningBundleIDs()
         return model.cacheGroups.contains { group in
-            group.isSelected, let bid = group.bundleID, running.contains(bid.lowercased())
+            guard group.isSelected, let bid = group.bundleID else { return false }
+            return running.contains(bid.lowercased())
         }
     }
 
