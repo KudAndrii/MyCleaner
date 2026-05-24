@@ -37,6 +37,10 @@ final class CleanerModel {
         case done(CleanupReport)
         case orphanScanning
         case orphanResults
+        case largeFileScanning
+        case largeFileResults
+        case cacheScanning
+        case cacheResults
         case duplicateScanning
         case duplicateResults
     }
@@ -49,7 +53,51 @@ final class CleanerModel {
     var items: [RelatedItem] = []
     var systemExtensions: [SystemExtensionInfo] = []
     var orphanGroups: [OrphanGroup] = []
+    var largeFiles: [LargeFileEntry] = []
+    var cacheGroups: [CacheGroup] = []
     var duplicateGroups: [DuplicateGroup] = []
+
+    /// User-controlled minimum-size filter for the large-file view.
+    /// Drives the slider in `LargeFileResultsView` and re-narrows the
+    /// already-scanned `largeFiles` list client-side — no re-scan
+    /// needed when the user nudges the slider.
+    var largeFileMinimumBytes: Int64 = LargeFileScanner.defaultMinimumBytes
+
+    /// Size floor the most recent scan was started with.
+    ///
+    /// The results-view slider hides any standard chip below this
+    /// value, since nothing smaller could ever surface no matter
+    /// where the slider sits. Set once at scan start and not touched
+    /// when the user nudges `largeFileMinimumBytes`.
+    var largeFileScanFloorBytes: Int64 = LargeFileScanner.defaultMinimumBytes
+
+    /// User-controlled category filter chip. `nil` means "show every
+    /// category"; otherwise only entries in the selected bucket are
+    /// visible.
+    var largeFileCategoryFilter: LargeFileCategory?
+
+    /// Structural progress of the in-flight large-file scan. One
+    /// entry per phase (Spotlight + every nest the user kept
+    /// selected), populated up front in `.pending` so the scanning
+    /// view can render the full step list immediately; entries flip
+    /// to `.inProgress` and `.completed` as the scanner emits events.
+    var largeFileScanPhases: [LargeFileScanPhase] = []
+
+    /// The currently-running large-file scan, kept around so the user
+    /// can cancel it from the scanning screen.
+    @ObservationIgnored
+    private var largeFileScanTask: Task<Void, Never>?
+
+    /// Structural progress of the in-flight cache scan. One entry per
+    /// phase (user/system Library Caches + every well-known toolchain
+    /// root), pre-populated in `.pending` so the scanning view can
+    /// render the full step list immediately.
+    var cacheScanPhases: [CacheScanPhase] = []
+
+    /// The currently-running cache scan, kept around so the user can
+    /// cancel it from the scanning screen.
+    @ObservationIgnored
+    private var cacheScanTask: Task<Void, Never>?
 
     /// Throttled progress signal published by the in-flight duplicate
     /// scan. `nil` when no scan is running; resets to `nil` after the
@@ -250,6 +298,13 @@ final class CleanerModel {
         systemExtensions = []
         currentTeamID = nil
         orphanGroups = []
+        largeFiles = []
+        largeFileCategoryFilter = nil
+        largeFileMinimumBytes = LargeFileScanner.defaultMinimumBytes
+        largeFileScanFloorBytes = LargeFileScanner.defaultMinimumBytes
+        largeFileScanPhases = []
+        cacheGroups = []
+        cacheScanPhases = []
         duplicateGroups = []
         duplicateScanTask?.cancel()
         duplicateScanTask = nil
@@ -342,6 +397,280 @@ final class CleanerModel {
         stage = .done(report)
     }
 
+    // MARK: - Large-file selection (derived)
+
+    /// Entries that pass the current category-chip and minimum-size
+    /// filters. The slider and chips re-filter this view in real time
+    /// without touching `largeFiles`, so the underlying scan result
+    /// survives both filter changes.
+    var visibleLargeFiles: [LargeFileEntry] {
+        largeFiles.filter { entry in
+            if entry.sizeBytes < largeFileMinimumBytes { return false }
+            if let cat = largeFileCategoryFilter, entry.category != cat { return false }
+            return true
+        }
+    }
+
+    /// Number of currently-visible entries the user has selected.
+    var largeFileSelectedCount: Int {
+        visibleLargeFiles.lazy.filter(\.isSelected).count
+    }
+
+    /// Bytes across every currently-visible selected entry.
+    var largeFileSelectedSize: Int64 {
+        visibleLargeFiles.lazy.filter(\.isSelected).map(\.sizeBytes).reduce(0, +)
+    }
+
+    /// Bytes across every visible entry, regardless of selection.
+    var largeFileVisibleSize: Int64 {
+        visibleLargeFiles.map(\.sizeBytes).reduce(0, +)
+    }
+
+    /// `true` when every currently-visible entry is selected
+    /// (and the visible list isn't empty). Drives the Select-All toggle.
+    var allLargeFilesSelected: Bool {
+        let visible = visibleLargeFiles
+        return !visible.isEmpty && visible.allSatisfy(\.isSelected)
+    }
+
+    // MARK: - Large-file flow
+
+    func startLargeFileScan(
+        minimumBytes: Int64 = LargeFileScanner.defaultMinimumBytes,
+        nests: [LargeFileNest]? = nil
+    ) {
+        errorMessage = nil
+        largeFiles = []
+        largeFileCategoryFilter = nil
+        largeFileMinimumBytes = minimumBytes
+        largeFileScanFloorBytes = minimumBytes
+        let walkNests = nests ?? LargeFileScanner.availableNests()
+        largeFileScanPhases = makeInitialLargeFilePhases(nests: walkNests)
+        stage = .largeFileScanning
+
+        let eventHandler: @Sendable (LargeFileScanner.ScanEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleLargeFileScanEvent(event)
+            }
+        }
+
+        largeFileScanTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let scanned = try await Task.detached(priority: .userInitiated) {
+                    try await LargeFileScanner.scan(
+                        minimumBytes: minimumBytes,
+                        nests: walkNests,
+                        onEvent: eventHandler
+                    )
+                }.value
+                try Task.checkCancellation()
+                self.largeFiles = scanned
+                self.stage = .largeFileResults
+                self.largeFileScanTask = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                self.stage = .idle
+                self.largeFileScanTask = nil
+            }
+        }
+    }
+
+    func cancelLargeFileScan() {
+        largeFileScanTask?.cancel()
+        largeFileScanTask = nil
+        largeFileScanPhases = []
+        stage = .idle
+    }
+
+    func setLargeFileMinimumBytes(_ bytes: Int64) {
+        largeFileMinimumBytes = bytes
+        if let category = largeFileCategoryFilter,
+           !largeFiles.contains(where: { $0.sizeBytes >= bytes && $0.category == category }) {
+            largeFileCategoryFilter = nil
+        }
+    }
+
+    private func makeInitialLargeFilePhases(nests: [LargeFileNest]) -> [LargeFileScanPhase] {
+        var phases: [LargeFileScanPhase] = [
+            LargeFileScanPhase(
+                id: LargeFileScanner.spotlightPhaseID,
+                displayName: "Spotlight (home folder)",
+                status: .pending
+            )
+        ]
+        for nest in nests {
+            phases.append(LargeFileScanPhase(
+                id: nest.url.path,
+                displayName: nest.displayName,
+                status: .pending
+            ))
+        }
+        return phases
+    }
+
+    private func handleLargeFileScanEvent(_ event: LargeFileScanner.ScanEvent) {
+        switch event {
+        case .phaseStarted(let id):
+            if let i = largeFileScanPhases.firstIndex(where: { $0.id == id }) {
+                largeFileScanPhases[i].status = .inProgress
+            }
+        case .phaseCompleted(let id, let candidatesAfter):
+            if let i = largeFileScanPhases.firstIndex(where: { $0.id == id }) {
+                largeFileScanPhases[i].status = .completed
+                largeFileScanPhases[i].candidatesAfter = candidatesAfter
+            }
+        }
+    }
+
+    func toggleLargeFile(id: URL) {
+        guard let i = largeFiles.firstIndex(where: { $0.id == id }) else { return }
+        largeFiles[i].isSelected.toggle()
+    }
+
+    func toggleAllLargeFiles() {
+        let visible = visibleLargeFiles
+        guard !visible.isEmpty else { return }
+        let target = !visible.allSatisfy(\.isSelected)
+        let visibleIDs = Set(visible.map(\.id))
+        for i in largeFiles.indices where visibleIDs.contains(largeFiles[i].id) {
+            largeFiles[i].isSelected = target
+        }
+    }
+
+    func confirmLargeFileCleanup() async {
+        let selected = largeFiles.filter(\.isSelected)
+        guard !selected.isEmpty else { return }
+        stage = .cleaning
+
+        let urls = selected.map(\.url)
+        let report = await trashURLs(urls)
+        stage = .done(report)
+    }
+
+    // MARK: - Cache selection (derived)
+
+    /// Items across every **selected** cache group.
+    var cacheSelectedCount: Int {
+        cacheGroups.reduce(0) { $0 + ($1.isSelected ? $1.entries.count : 0) }
+    }
+
+    /// Bytes across every **selected** cache group.
+    var cacheSelectedSize: Int64 {
+        cacheGroups.reduce(0) { $0 + ($1.isSelected ? $1.totalBytes : 0) }
+    }
+
+    /// Bytes across every cache group, regardless of selection.
+    var cacheTotalSize: Int64 {
+        cacheGroups.map(\.totalBytes).reduce(0, +)
+    }
+
+    /// `true` when every cache group is selected (and the list isn't empty).
+    var allCachesSelected: Bool {
+        !cacheGroups.isEmpty && cacheGroups.allSatisfy(\.isSelected)
+    }
+
+    // MARK: - Cache flow
+
+    func startCacheScan() {
+        errorMessage = nil
+        cacheGroups = []
+        cacheScanPhases = makeInitialCachePhases()
+        stage = .cacheScanning
+
+        let eventHandler: @Sendable (CacheScanner.ScanEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleCacheScanEvent(event)
+            }
+        }
+
+        cacheScanTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try await CacheScanner.scan(onEvent: eventHandler)
+                }.value
+                try Task.checkCancellation()
+                self.cacheGroups = result.groups
+                self.stage = .cacheResults
+                self.cacheScanTask = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                self.stage = .idle
+                self.cacheScanTask = nil
+            }
+        }
+    }
+
+    func cancelCacheScan() {
+        cacheScanTask?.cancel()
+        cacheScanTask = nil
+        cacheScanPhases = []
+        stage = .idle
+    }
+
+    private func makeInitialCachePhases() -> [CacheScanPhase] {
+        var phases: [CacheScanPhase] = [
+            CacheScanPhase(
+                id: CacheScanner.userLibraryCachesPhaseID,
+                displayName: "~/Library/Caches",
+                status: .pending
+            ),
+            CacheScanPhase(
+                id: CacheScanner.systemLibraryCachesPhaseID,
+                displayName: "/Library/Caches",
+                status: .pending
+            ),
+        ]
+        for path in CacheScanner.wellKnownPaths() {
+            phases.append(CacheScanPhase(
+                id: path.relativePath,
+                displayName: path.displayName,
+                status: .pending
+            ))
+        }
+        return phases
+    }
+
+    private func handleCacheScanEvent(_ event: CacheScanner.ScanEvent) {
+        switch event {
+        case .phaseStarted(let id):
+            if let i = cacheScanPhases.firstIndex(where: { $0.id == id }) {
+                cacheScanPhases[i].status = .inProgress
+            }
+        case .phaseCompleted(let id, let groupsAfter):
+            if let i = cacheScanPhases.firstIndex(where: { $0.id == id }) {
+                cacheScanPhases[i].status = .completed
+                cacheScanPhases[i].groupsAfter = groupsAfter
+            }
+        }
+    }
+
+    func toggleCacheGroup(id: String) {
+        guard let i = cacheGroups.firstIndex(where: { $0.id == id }) else { return }
+        cacheGroups[i].isSelected.toggle()
+    }
+
+    func toggleAllCaches() {
+        let target = !allCachesSelected
+        for i in cacheGroups.indices { cacheGroups[i].isSelected = target }
+    }
+
+    func confirmCacheCleanup() async {
+        let selected = cacheGroups.filter(\.isSelected)
+        guard !selected.isEmpty else { return }
+        stage = .cleaning
+
+        let urls = selected.flatMap { $0.entries.map(\.url) }
+        let report = await trashURLs(urls)
+
+        stage = .done(report)
+    }
+
     // MARK: - Duplicate selection (derived)
 
     /// Total number of copies the user has selected for deletion
@@ -378,17 +707,6 @@ final class CleanerModel {
 
     /// Kicks off the duplicate scan and parks the result on
     /// ``duplicateGroups``.
-    ///
-    /// Wires progress through an `AsyncStream` so the scanner can
-    /// emit throttled updates from its detached task without
-    /// reaching back to the main actor itself — a dedicated
-    /// main-actor consumer drains the stream into
-    /// ``duplicateScanProgress``. The detached task is stored on
-    /// ``duplicateScanTask`` so a concurrent
-    /// ``cancelDuplicateScan()`` can interrupt the walk mid-flight;
-    /// the scanner itself yields to cooperative cancellation between
-    /// every file and every hash chunk so the observable latency is
-    /// sub-second.
     func startDuplicateScan(scope: [URL]) async {
         errorMessage = nil
         duplicateGroups = []
@@ -397,9 +715,6 @@ final class CleanerModel {
 
         let (progressStream, continuation) = AsyncStream<DuplicateScanner.Progress>.makeStream()
 
-        // Main-actor consumer — folds progress events from the
-        // scanner thread into observable state. Exits when the
-        // scanner calls `finish()` on the continuation.
         let progressTask = Task { @MainActor [weak self] in
             for await update in progressStream {
                 self?.duplicateScanProgress = update
@@ -416,39 +731,25 @@ final class CleanerModel {
 
         do {
             let groups = try await task.value
-            // Guard against a stale completion after the user
-            // cancelled and started another flow.
             guard duplicateScanTask == task else { return }
             duplicateGroups = groups
             stage = .duplicateResults
         } catch is CancellationError {
-            // Honored cancellation — back to the dropzone without
-            // surfacing an error.
             if stage == .duplicateScanning { stage = .idle }
         } catch {
             errorMessage = "Duplicate scan failed: \(error.localizedDescription)"
             stage = .idle
         }
 
-        // Ensure the consumer has drained and let go of the stream
-        // before we clear the published progress.
         await progressTask.value
         if duplicateScanTask == task { duplicateScanTask = nil }
         duplicateScanProgress = nil
     }
 
-    /// Cancels the in-flight duplicate scan. No-op when no scan is
-    /// running. The scan task observes cancellation between files /
-    /// hash chunks and transitions back to ``Stage/idle``.
     func cancelDuplicateScan() {
         duplicateScanTask?.cancel()
     }
 
-    /// Flips a single duplicate copy's selection.
-    ///
-    /// Refuses to deselect the last kept copy in a group so the user
-    /// can't accidentally mark every copy for deletion — the safety
-    /// rule in the feature spec.
     func toggleDuplicateCopy(groupID: UUID, copyID: UUID) {
         guard let gi = duplicateGroups.firstIndex(where: { $0.id == groupID }),
               let ci = duplicateGroups[gi].copies.firstIndex(where: { $0.id == copyID })
@@ -456,8 +757,6 @@ final class CleanerModel {
 
         let currentlySelected = duplicateGroups[gi].copies[ci].isSelectedForDeletion
         if !currentlySelected {
-            // About to select for deletion — make sure at least one
-            // other copy will remain kept.
             let othersKept = duplicateGroups[gi].copies.enumerated().contains { idx, copy in
                 idx != ci && !copy.isSelectedForDeletion
             }
@@ -466,13 +765,6 @@ final class CleanerModel {
         duplicateGroups[gi].copies[ci].isSelectedForDeletion.toggle()
     }
 
-    /// `true` when at least one other copy in the group is currently
-    /// kept (i.e. the supplied copy can be safely deselected without
-    /// hitting the "always keep one" guard).
-    ///
-    /// Exposed so the UI can disable the toggle on the last kept
-    /// copy and surface a hint, matching the behaviour of
-    /// ``toggleDuplicateCopy(groupID:copyID:)``.
     func canDeselectDuplicateCopy(groupID: UUID, copyID: UUID) -> Bool {
         guard let group = duplicateGroups.first(where: { $0.id == groupID }) else { return false }
         guard let copy = group.copies.first(where: { $0.id == copyID }) else { return false }
@@ -480,12 +772,6 @@ final class CleanerModel {
         return group.copies.contains { $0.id != copyID && !$0.isSelectedForDeletion }
     }
 
-    /// Moves every selected duplicate copy to the Trash and
-    /// transitions to `.done` with the resulting ``CleanupReport``.
-    ///
-    /// Unlike the per-app and orphan flows, no bundle-scoped
-    /// side-effects fire — duplicate detection doesn't touch
-    /// preferences, launch items, or TCC entries.
     func confirmDuplicateCleanup() async {
         let urls = duplicateGroups.flatMap { group in
             group.copies.filter(\.isSelectedForDeletion).map(\.url)

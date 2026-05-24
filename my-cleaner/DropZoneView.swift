@@ -12,6 +12,7 @@ struct DropZoneView: View {
     @Bindable var permissions: PermissionsChecker
     var onReviewPermissions: () -> Void
 
+    @State private var showLargeFileScope = false
     @State private var showDuplicateOptions = false
     @State private var duplicateScope: Set<DuplicateScopeFolder> = Set(DuplicateScopeFolder.allCases)
 
@@ -30,6 +31,9 @@ struct DropZoneView: View {
         .padding(24)
         .onAppear {
             permissions.refresh()
+        }
+        .sheet(isPresented: $showLargeFileScope) {
+            LargeFileScopeView(model: model, isPresented: $showLargeFileScope)
         }
         .sheet(isPresented: $showDuplicateOptions) {
             DuplicateScopeView(
@@ -148,6 +152,26 @@ struct DropZoneView: View {
                 .buttonStyle(.glass)
                 .controlSize(.large)
                 .help("Scan ~/Library for support files whose owning app is no longer installed.")
+
+                Button {
+                    showLargeFileScope = true
+                } label: {
+                    Label("Find large files", systemImage: "scalemass")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .help("Rank the biggest files and bundles in your home directory for one-click cleanup.")
+
+                Button {
+                    model.startCacheScan()
+                } label: {
+                    Label("Find oversized caches", systemImage: "externaldrive.badge.minus")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .help("Surface large app and toolchain caches you can wipe without removing the app.")
 
                 Button {
                     showDuplicateOptions = true

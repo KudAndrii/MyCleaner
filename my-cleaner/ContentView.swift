@@ -44,8 +44,12 @@ struct ContentView: View {
         case .done: 4
         case .orphanScanning: 5
         case .orphanResults: 6
-        case .duplicateScanning: 7
-        case .duplicateResults: 8
+        case .largeFileScanning: 7
+        case .largeFileResults: 8
+        case .cacheScanning: 9
+        case .cacheResults: 10
+        case .duplicateScanning: 11
+        case .duplicateResults: 12
         }
     }
 
@@ -70,6 +74,14 @@ struct ContentView: View {
             OrphanScanningView()
         case .orphanResults:
             OrphanResultsView(model: model)
+        case .largeFileScanning:
+            LargeFileScanningView(model: model)
+        case .largeFileResults:
+            LargeFileResultsView(model: model)
+        case .cacheScanning:
+            CacheScanningView(model: model)
+        case .cacheResults:
+            CacheResultsView(model: model)
         case .duplicateScanning:
             DuplicateScanningView(model: model)
         case .duplicateResults:

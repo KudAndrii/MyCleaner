@@ -144,6 +144,7 @@ enum DuplicateScanner {
         for root in scope {
             try Task.checkCancellation()
             try enumerate(at: root) { path, size in
+                try Task.checkCancellation()
                 sizeBuckets[size, default: []].append(path)
                 filesSeen += 1
                 let now = Date()

@@ -373,7 +373,7 @@ struct DuplicateScannerScanTests {
 /// Lock-protected sink for ``DuplicateScanner.Progress`` events
 /// observed across the scanner's detached task. Lets the test
 /// thread snapshot the full stream after the scan finishes.
-private final class ProgressCollector: @unchecked Sendable {
+private nonisolated final class ProgressCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var events: [DuplicateScanner.Progress] = []
 
