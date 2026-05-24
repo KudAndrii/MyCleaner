@@ -26,6 +26,7 @@ struct CleanerModelInitialStateTests {
         #expect(m.appSize == 0)
         #expect(m.items.isEmpty)
         #expect(m.orphanGroups.isEmpty)
+        #expect(m.cacheGroups.isEmpty)
         #expect(m.errorMessage == nil)
         #expect(m.isHovering == false)
     }
@@ -42,6 +43,10 @@ struct CleanerModelInitialStateTests {
         #expect(m.orphanSelectedSize == 0)
         #expect(m.orphanTotalSize == 0)
         #expect(m.allOrphansSelected == false)
+        #expect(m.cacheSelectedCount == 0)
+        #expect(m.cacheSelectedSize == 0)
+        #expect(m.cacheTotalSize == 0)
+        #expect(m.allCachesSelected == false)
     }
 }
 
@@ -229,6 +234,118 @@ struct CleanerModelOrphanTests {
     }
 }
 
+@Suite("CleanerModel — cache selection")
+@MainActor
+struct CleanerModelCacheTests {
+
+    private func entry(_ size: Int64) -> CacheEntry {
+        CacheEntry(
+            url: URL(fileURLWithPath: "/tmp/\(UUID().uuidString)"),
+            sizeBytes: size,
+            isDirectory: true
+        )
+    }
+
+    private func group(_ id: String, sizes: [Int64], selected: Bool) -> CacheGroup {
+        CacheGroup(
+            id: id,
+            bundleID: id,
+            displayName: id,
+            appURL: nil,
+            kind: .installedApp,
+            entries: sizes.map(entry),
+            isSafeToDelete: true,
+            isSelected: selected
+        )
+    }
+
+    @Test("cacheSelectedCount sums entries in selected groups only")
+    func selectedCount() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10, 20], selected: true),
+            group("com.b.bar", sizes: [10, 20, 30], selected: false),
+            group("com.c.baz", sizes: [50], selected: true),
+        ]
+        #expect(m.cacheSelectedCount == 3)
+    }
+
+    @Test("cacheSelectedSize sums sizes in selected groups only")
+    func selectedSize() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10, 20], selected: true),     // 30
+            group("com.b.bar", sizes: [100, 100], selected: false),
+            group("com.c.baz", sizes: [50], selected: true),         // 50
+        ]
+        #expect(m.cacheSelectedSize == 80)
+    }
+
+    @Test("cacheTotalSize sums every group regardless of selection")
+    func totalSize() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10, 20], selected: true),
+            group("com.b.bar", sizes: [100], selected: false),
+        ]
+        #expect(m.cacheTotalSize == 130)
+    }
+
+    @Test("toggleCacheGroup flips a single group's selection")
+    func toggleCacheGroup() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10], selected: false),
+            group("com.b.bar", sizes: [20], selected: true),
+        ]
+        m.toggleCacheGroup(id: "com.a.foo")
+        #expect(m.cacheGroups[0].isSelected == true)
+        #expect(m.cacheGroups[1].isSelected == true)
+        m.toggleCacheGroup(id: "com.b.bar")
+        #expect(m.cacheGroups[1].isSelected == false)
+    }
+
+    @Test("toggleCacheGroup is a no-op for unknown id")
+    func toggleUnknown() {
+        let m = CleanerModel()
+        m.cacheGroups = [group("com.a.foo", sizes: [10], selected: false)]
+        m.toggleCacheGroup(id: "not.a.real.id")
+        #expect(m.cacheGroups[0].isSelected == false)
+    }
+
+    @Test("toggleAllCaches selects all when at least one is unselected")
+    func toggleAllSelects() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("a.b.c", sizes: [1], selected: true),
+            group("a.b.d", sizes: [1], selected: false),
+        ]
+        m.toggleAllCaches()
+        #expect(m.cacheGroups.allSatisfy { $0.isSelected })
+    }
+
+    @Test("toggleAllCaches deselects all when all are selected")
+    func toggleAllDeselects() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("a.b.c", sizes: [1], selected: true),
+            group("a.b.d", sizes: [1], selected: true),
+        ]
+        m.toggleAllCaches()
+        #expect(m.cacheGroups.allSatisfy { !$0.isSelected })
+    }
+
+    @Test("confirmCacheCleanup with no selection stays in cacheResults")
+    func confirmCacheCleanupNoop() async {
+        let m = CleanerModel()
+        m.cacheGroups = [group("com.a.b", sizes: [1], selected: false)]
+        m.stage = .cacheResults
+        await m.confirmCacheCleanup()
+        // Early return: stage shouldn't move to .cleaning or .done.
+        #expect(m.stage == .cacheResults)
+    }
+}
+
 @Suite("CleanerModel — reset & error paths")
 @MainActor
 struct CleanerModelResetTests {
@@ -245,6 +362,16 @@ struct CleanerModelResetTests {
             isDirectory: false
         )]
         m.orphanGroups = [OrphanGroup(bundleID: "com.a.b", items: [], isSelected: true)]
+        m.cacheGroups = [CacheGroup(
+            id: "com.a.b",
+            bundleID: "com.a.b",
+            displayName: "x",
+            appURL: nil,
+            kind: .installedApp,
+            entries: [],
+            isSafeToDelete: true,
+            isSelected: true
+        )]
         m.errorMessage = "boom"
         m.isHovering = true
         m.stage = .results
@@ -254,6 +381,7 @@ struct CleanerModelResetTests {
         #expect(m.appSize == 0)
         #expect(m.items.isEmpty)
         #expect(m.orphanGroups.isEmpty)
+        #expect(m.cacheGroups.isEmpty)
         #expect(m.errorMessage == nil)
         #expect(m.isHovering == false)
         #expect(m.stage == .idle)
