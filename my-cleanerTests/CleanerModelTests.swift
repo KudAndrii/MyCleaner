@@ -320,7 +320,7 @@ struct CleanerModelLargeFileTests {
         // Both visible (video) entries are now selected, the hidden
         // archive entry is untouched.
         let videos = m.largeFiles.filter { $0.category == .video }
-        #expect(videos.allSatisfy(\.isSelected))
+        #expect(videos.allSatisfy { $0.isSelected })
         let archives = m.largeFiles.filter { $0.category == .archive }
         #expect(archives.allSatisfy { !$0.isSelected })
     }
