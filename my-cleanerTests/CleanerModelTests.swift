@@ -26,6 +26,9 @@ struct CleanerModelInitialStateTests {
         #expect(m.appSize == 0)
         #expect(m.items.isEmpty)
         #expect(m.orphanGroups.isEmpty)
+        #expect(m.largeFiles.isEmpty)
+        #expect(m.largeFileCategoryFilter == nil)
+        #expect(m.largeFileMinimumBytes == LargeFileScanner.defaultMinimumBytes)
         #expect(m.cacheGroups.isEmpty)
         #expect(m.errorMessage == nil)
         #expect(m.isHovering == false)
@@ -43,6 +46,10 @@ struct CleanerModelInitialStateTests {
         #expect(m.orphanSelectedSize == 0)
         #expect(m.orphanTotalSize == 0)
         #expect(m.allOrphansSelected == false)
+        #expect(m.largeFileSelectedCount == 0)
+        #expect(m.largeFileSelectedSize == 0)
+        #expect(m.largeFileVisibleSize == 0)
+        #expect(m.allLargeFilesSelected == false)
         #expect(m.cacheSelectedCount == 0)
         #expect(m.cacheSelectedSize == 0)
         #expect(m.cacheTotalSize == 0)
@@ -231,6 +238,154 @@ struct CleanerModelOrphanTests {
         ]
         m.toggleAllOrphans()
         #expect(m.orphanGroups.allSatisfy { !$0.isSelected })
+    }
+}
+
+@Suite("CleanerModel — large-file selection")
+@MainActor
+struct CleanerModelLargeFileTests {
+
+    private func entry(
+        _ size: Int64,
+        category: LargeFileCategory = .other,
+        selected: Bool = false,
+        id: String = UUID().uuidString
+    ) -> LargeFileEntry {
+        LargeFileEntry(
+            url: URL(fileURLWithPath: "/tmp/\(id)"),
+            displayName: id,
+            sizeBytes: size,
+            isDirectory: false,
+            category: category,
+            modificationDate: nil,
+            isSelected: selected
+        )
+    }
+
+    @Test("visibleLargeFiles passes through everything by default")
+    func visibleByDefault() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video),
+            entry(150_000_000, category: .archive),
+        ]
+        #expect(m.visibleLargeFiles.count == 2)
+    }
+
+    @Test("Minimum-size filter narrows the visible list without touching the underlying scan")
+    func minimumSizeFilter() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(80_000_000, category: .other),
+            entry(200_000_000, category: .other),
+        ]
+        m.largeFileMinimumBytes = 100_000_000
+        #expect(m.visibleLargeFiles.count == 1)
+        // Underlying list survives — flipping the slider back returns everything.
+        m.largeFileMinimumBytes = 1
+        #expect(m.visibleLargeFiles.count == 2)
+    }
+
+    @Test("Category chip filter narrows to a single bucket")
+    func categoryFilter() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video),
+            entry(200_000_000, category: .archive),
+            entry(200_000_000, category: .video),
+        ]
+        m.largeFileCategoryFilter = .video
+        #expect(m.visibleLargeFiles.count == 2)
+        #expect(m.visibleLargeFiles.allSatisfy { $0.category == .video })
+    }
+
+    @Test("largeFileSelectedCount counts only selected visible entries")
+    func selectedCount() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video, selected: true),
+            entry(200_000_000, category: .video, selected: false),
+            entry(50_000_000, category: .archive, selected: true),
+        ]
+        m.largeFileMinimumBytes = 100_000_000
+        // Only the two video entries are visible; one of them is selected.
+        #expect(m.largeFileSelectedCount == 1)
+    }
+
+    @Test("toggleAllLargeFiles only touches visible entries")
+    func toggleAllVisibleOnly() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video, selected: false),
+            entry(200_000_000, category: .video, selected: false),
+            entry(50_000_000, category: .archive, selected: false),
+        ]
+        m.largeFileMinimumBytes = 100_000_000
+        m.toggleAllLargeFiles()
+        // Both visible (video) entries are now selected, the hidden
+        // archive entry is untouched.
+        let videos = m.largeFiles.filter { $0.category == .video }
+        #expect(videos.allSatisfy { $0.isSelected })
+        let archives = m.largeFiles.filter { $0.category == .archive }
+        #expect(archives.allSatisfy { !$0.isSelected })
+    }
+
+    @Test("toggleLargeFile flips a single entry's selection")
+    func toggleSingle() {
+        let m = CleanerModel()
+        let target = entry(200_000_000, category: .video, selected: false)
+        m.largeFiles = [target]
+        m.toggleLargeFile(id: target.id)
+        #expect(m.largeFiles.first?.isSelected == true)
+        m.toggleLargeFile(id: target.id)
+        #expect(m.largeFiles.first?.isSelected == false)
+    }
+
+    @Test("toggleLargeFile is a no-op for unknown ids")
+    func toggleUnknown() {
+        let m = CleanerModel()
+        let target = entry(200_000_000, category: .video, selected: false)
+        m.largeFiles = [target]
+        m.toggleLargeFile(id: URL(fileURLWithPath: "/tmp/not-real"))
+        #expect(m.largeFiles.first?.isSelected == false)
+    }
+
+    @Test("confirmLargeFileCleanup with no selection stays in largeFileResults")
+    func confirmNoop() async {
+        let m = CleanerModel()
+        m.largeFiles = [entry(200_000_000, category: .video, selected: false)]
+        m.stage = .largeFileResults
+        await m.confirmLargeFileCleanup()
+        #expect(m.stage == .largeFileResults)
+    }
+
+    @Test("reset clears the large-file state and filters")
+    func resetClearsLargeFiles() {
+        let m = CleanerModel()
+        m.largeFiles = [entry(200_000_000, category: .video, selected: true)]
+        m.largeFileMinimumBytes = 500_000_000
+        m.largeFileCategoryFilter = .video
+        m.stage = .largeFileResults
+
+        m.reset()
+
+        #expect(m.largeFiles.isEmpty)
+        #expect(m.largeFileMinimumBytes == LargeFileScanner.defaultMinimumBytes)
+        #expect(m.largeFileCategoryFilter == nil)
+        #expect(m.stage == .idle)
+    }
+
+    @Test("allLargeFilesSelected requires the visible list to be non-empty")
+    func allSelectedRespectsVisibility() {
+        let m = CleanerModel()
+        #expect(m.allLargeFilesSelected == false)
+        m.largeFiles = [
+            entry(200_000_000, category: .video, selected: true),
+            entry(200_000_000, category: .video, selected: true),
+        ]
+        #expect(m.allLargeFilesSelected == true)
+        m.largeFileCategoryFilter = .archive  // hides everything
+        #expect(m.allLargeFilesSelected == false)
     }
 }
 
