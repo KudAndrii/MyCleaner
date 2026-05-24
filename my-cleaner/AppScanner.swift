@@ -452,10 +452,17 @@ enum AppScanner {
         ) else { return 0 }
 
         var total: Int64 = 0
+        // Each iteration drains its own autorelease pool — the
+        // NSDirectoryEnumerator vends autoreleased URLs with cached
+        // resource values attached, and a multi-GB Xcode DerivedData
+        // sum without this drains pinned a thousand URL caches in
+        // the pool until the function returned.
         for case let fileURL as URL in enumerator {
-            if let values = try? fileURL.resourceValues(forKeys: keys),
-               values.isDirectory == false {
-                total += Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+            autoreleasepool {
+                if let values = try? fileURL.resourceValues(forKeys: keys),
+                   values.isDirectory == false {
+                    total += Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+                }
             }
         }
         return total

@@ -188,20 +188,69 @@ enum LargeFileScanner {
             errorHandler: { _, _ in true }
         ) else { return [] }
 
+        // Each iteration drains its own autorelease pool — the
+        // NSDirectoryEnumerator vends autoreleased NSURL objects with
+        // multi-KB resource value caches attached, and on a deep tree
+        // (think `~/Documents` full of node_modules) those pile up to
+        // gigabytes before the function returns.
         for case let url as URL in enumerator {
             try Task.checkCancellation()
-            let std = url.standardizedFileURL
-            if isPackageBundleExtension(std.pathExtension) {
-                enumerator.skipDescendants()
+            try autoreleasepool {
+                let std = url.standardizedFileURL
+                let entryIsDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if entryIsDir {
+                    // Skip build / dependency caches that aren't worth
+                    // sizing — walking them adds minutes per
+                    // programming project and they don't yield
+                    // candidates the user wants to delete via this
+                    // flow.
+                    if shouldSkipDirectoryName(std.lastPathComponent) {
+                        enumerator.skipDescendants()
+                    }
+                    return
+                }
+                if isPackageBundleExtension(std.pathExtension) {
+                    enumerator.skipDescendants()
+                    results.append(std)
+                    return
+                }
                 results.append(std)
-                continue
             }
-            let entryIsDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            if entryIsDir { continue }
-            results.append(std)
         }
         return results
     }
+
+    /// `true` for directory base-names the walker should never
+    /// descend into. Build artefacts and dependency caches are
+    /// re-created from source by their toolchains — walking them is
+    /// pure overhead.
+    nonisolated static func shouldSkipDirectoryName(_ name: String) -> Bool {
+        skipDirectoryNames.contains(name)
+    }
+
+    nonisolated private static let skipDirectoryNames: Set<String> = [
+        // Build outputs
+        "bin", "obj",                       // .NET / Visual Studio
+        "build", ".build",                  // generic, Swift Package Manager
+        "target",                           // Rust, Maven
+        "dist", "out",                      // generic JS / Rollup / TypeScript
+        "DerivedData",                      // Xcode
+        // Dependency caches
+        "node_modules",                     // Node.js / npm / Yarn / pnpm
+        "Pods",                             // CocoaPods
+        "vendor",                           // PHP / Composer, Ruby / Bundler, Go modules
+        ".gradle",                          // Gradle wrapper cache
+        ".cargo",                           // Cargo
+        // Python virtualenvs and bytecode
+        "venv", ".venv", "env", ".env",
+        "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        // Git plumbing
+        ".git", ".svn", ".hg",
+        // Coverage / test artifacts
+        "coverage", ".nyc_output",
+        // Editor / IDE state
+        ".idea", ".vscode",
+    ]
 
     /// `true` for package-style extensions whose total directory size
     /// is more meaningful than any single file inside.

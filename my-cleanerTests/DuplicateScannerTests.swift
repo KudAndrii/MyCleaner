@@ -348,7 +348,7 @@ struct DuplicateScannerScanTests {
         let collected = updates.snapshot()
         // Enumeration phase: at least one update with filesSeen > 0.
         #expect(collected.contains { update in
-            if case .enumerating(let n) = update { return n > 0 }
+            if case .enumerating(_, let n) = update { return n > 0 }
             return false
         })
         // Hash phase: at least one update.
