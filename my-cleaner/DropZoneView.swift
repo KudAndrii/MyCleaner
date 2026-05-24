@@ -138,7 +138,7 @@ struct DropZoneView: View {
                 .help("Scan ~/Library for support files whose owning app is no longer installed.")
 
                 Button {
-                    Task { await model.startLargeFileScan() }
+                    model.startLargeFileScan()
                 } label: {
                     Label("Find large files", systemImage: "scalemass")
                         .padding(.horizontal, 6)

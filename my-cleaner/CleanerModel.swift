@@ -62,6 +62,18 @@ final class CleanerModel {
     /// visible.
     var largeFileCategoryFilter: LargeFileCategory?
 
+    /// Running count of large-file candidates surfaced so far during
+    /// the in-progress scan. Drives the progress indicator on
+    /// `LargeFileScanningView` — Spotlight + each targeted nest emit
+    /// an update so the user sees the number climb instead of staring
+    /// at a static spinner.
+    var largeFileScanProgress: Int = 0
+
+    /// The currently-running large-file scan, kept around so the user
+    /// can cancel it from the scanning screen.
+    @ObservationIgnored
+    private var largeFileScanTask: Task<Void, Never>?
+
     var errorMessage: String?
     var isHovering: Bool = false
 
@@ -381,19 +393,54 @@ final class CleanerModel {
     /// Kicks off the large-file scan and parks the result on
     /// `largeFiles`. Resets the slider / chip filters back to
     /// defaults so the user starts with the full ranked list.
-    func startLargeFileScan() async {
+    ///
+    /// The scan runs on a detached task tracked by
+    /// `largeFileScanTask` so `cancelLargeFileScan()` can stop it
+    /// mid-walk. Progress updates flow back to the main actor via the
+    /// `onProgress` callback so the scanning view's counter can climb
+    /// while the targeted nests are being walked.
+    func startLargeFileScan() {
         errorMessage = nil
         largeFiles = []
         largeFileCategoryFilter = nil
         largeFileMinimumBytes = LargeFileScanner.defaultMinimumBytes
+        largeFileScanProgress = 0
         stage = .largeFileScanning
 
-        let scanned = await Task.detached(priority: .userInitiated) {
-            LargeFileScanner.scan()
-        }.value
+        let progressHandler: @Sendable (Int) -> Void = { [weak self] count in
+            guard let self else { return }
+            Task { @MainActor in
+                self.largeFileScanProgress = count
+            }
+        }
 
-        largeFiles = scanned
-        stage = .largeFileResults
+        largeFileScanTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let scanned = try await Task.detached(priority: .userInitiated) {
+                    try await LargeFileScanner.scan(onProgress: progressHandler)
+                }.value
+                try Task.checkCancellation()
+                self.largeFiles = scanned
+                self.stage = .largeFileResults
+                self.largeFileScanTask = nil
+            } catch is CancellationError {
+                // Cancel already set `stage = .idle` in `cancelLargeFileScan()`.
+                return
+            } catch {
+                self.stage = .idle
+                self.largeFileScanTask = nil
+            }
+        }
+    }
+
+    /// Cancels the in-progress large-file scan, if any, and returns
+    /// the UI to the dropzone. Safe to call when nothing is running.
+    func cancelLargeFileScan() {
+        largeFileScanTask?.cancel()
+        largeFileScanTask = nil
+        largeFileScanProgress = 0
+        stage = .idle
     }
 
     /// Flips a single large-file entry's selection. No-op for unknown ids.

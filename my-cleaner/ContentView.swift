@@ -71,7 +71,7 @@ struct ContentView: View {
         case .orphanResults:
             OrphanResultsView(model: model)
         case .largeFileScanning:
-            LargeFileScanningView()
+            LargeFileScanningView(model: model)
         case .largeFileResults:
             LargeFileResultsView(model: model)
         }

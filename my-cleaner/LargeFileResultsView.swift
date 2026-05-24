@@ -7,6 +7,8 @@ import SwiftUI
 import AppKit
 
 struct LargeFileScanningView: View {
+    @Bindable var model: CleanerModel
+
     var body: some View {
         VStack(spacing: 24) {
             Image(systemName: "scalemass")
@@ -15,7 +17,7 @@ struct LargeFileScanningView: View {
                 .foregroundStyle(.tint)
             ProgressView()
                 .controlSize(.large)
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 Text("Ranking the biggest files…")
                     .font(.title3.weight(.semibold))
                 Text("Asking Spotlight for files above 100 MB and topping up well-known nests (simulator runtimes, Docker, virtual machines).")
@@ -23,7 +25,23 @@ struct LargeFileScanningView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 460)
+                if model.largeFileScanProgress > 0 {
+                    Text("\(model.largeFileScanProgress) \(model.largeFileScanProgress == 1 ? "candidate" : "candidates") found so far")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                        .padding(.top, 4)
+                }
             }
+            Button(role: .cancel) {
+                model.cancelLargeFileScan()
+            } label: {
+                Text("Cancel")
+                    .frame(minWidth: 90)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.large)
+            .padding(.top, 8)
         }
         .padding(48)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

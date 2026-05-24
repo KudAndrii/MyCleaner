@@ -162,7 +162,7 @@ struct DoneView: View {
             Button {
                 onReset()
             } label: {
-                Label("Clean another app", systemImage: "arrow.counterclockwise")
+                Label("Done", systemImage: "arrow.counterclockwise")
                     .padding(.horizontal, 6)
             }
             .buttonStyle(.glassProminent)

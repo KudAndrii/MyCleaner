@@ -53,21 +53,37 @@ enum LargeFileScanner {
     ///     targeted-enumeration hits.
     ///   - limit: Maximum number of entries to return; the rest are
     ///     dropped after the result list is sorted by size.
+    ///   - onProgress: Optional callback invoked with the running
+    ///     count of surviving candidates after Spotlight and after
+    ///     each targeted nest. Lets the UI show the user something is
+    ///     happening while the (potentially slow) directory walks run.
+    /// - Throws: `CancellationError` when the surrounding task is
+    ///   cancelled — checked before Spotlight, before each nest, and
+    ///   between every URL inside a nest so the user sees a prompt
+    ///   response to the Cancel button.
     nonisolated static func scan(
         minimumBytes: Int64 = defaultMinimumBytes,
-        limit: Int = defaultLimit
-    ) -> [LargeFileEntry] {
+        limit: Int = defaultLimit,
+        onProgress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> [LargeFileEntry] {
         var found: [URL: LargeFileEntry] = [:]
 
+        try Task.checkCancellation()
         let spotlightURLs = spotlightHits(minimumBytes: minimumBytes)
         for url in spotlightURLs {
+            try Task.checkCancellation()
             insert(url, minimumBytes: minimumBytes, into: &found)
         }
+        onProgress?(found.count)
 
         for nest in targetedNests() {
-            for url in enumerateNest(nest, minimumBytes: minimumBytes) {
+            try Task.checkCancellation()
+            let nestURLs = try enumerateNest(nest, minimumBytes: minimumBytes)
+            for url in nestURLs {
+                try Task.checkCancellation()
                 insert(url, minimumBytes: minimumBytes, into: &found)
             }
+            onProgress?(found.count)
         }
 
         let sorted = found.values.sorted { $0.sizeBytes > $1.sizeBytes }
@@ -129,7 +145,7 @@ enum LargeFileScanner {
     private nonisolated static func enumerateNest(
         _ nest: URL,
         minimumBytes: Int64
-    ) -> [URL] {
+    ) throws -> [URL] {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: nest.path, isDirectory: &isDir), isDir.boolValue else { return [] }
@@ -144,6 +160,7 @@ enum LargeFileScanner {
         ) else { return [] }
 
         for case let url as URL in enumerator {
+            try Task.checkCancellation()
             let std = url.standardizedFileURL
             if isPackageBundleExtension(std.pathExtension) {
                 enumerator.skipDescendants()
