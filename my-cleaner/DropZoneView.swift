@@ -12,6 +12,8 @@ struct DropZoneView: View {
     @Bindable var permissions: PermissionsChecker
     var onReviewPermissions: () -> Void
 
+    @State private var showLargeFileScope = false
+
     var body: some View {
         VStack(spacing: 14) {
             if SandboxStatus.isSandboxed {
@@ -27,6 +29,9 @@ struct DropZoneView: View {
         .padding(24)
         .onAppear {
             permissions.refresh()
+        }
+        .sheet(isPresented: $showLargeFileScope) {
+            LargeFileScopeView(model: model, isPresented: $showLargeFileScope)
         }
     }
 
@@ -138,7 +143,7 @@ struct DropZoneView: View {
                 .help("Scan ~/Library for support files whose owning app is no longer installed.")
 
                 Button {
-                    model.startLargeFileScan()
+                    showLargeFileScope = true
                 } label: {
                     Label("Find large files", systemImage: "scalemass")
                         .padding(.horizontal, 6)

@@ -10,41 +10,116 @@ struct LargeFileScanningView: View {
     @Bindable var model: CleanerModel
 
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "scalemass")
-                .font(.system(size: 72, weight: .light))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            ProgressView()
-                .controlSize(.large)
-            VStack(spacing: 6) {
-                Text("Ranking the biggest files…")
-                    .font(.title3.weight(.semibold))
-                Text("Asking Spotlight for files above 100 MB and topping up well-known nests (simulator runtimes, Docker, virtual machines).")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 460)
-                if model.largeFileScanProgress > 0 {
-                    Text("\(model.largeFileScanProgress) \(model.largeFileScanProgress == 1 ? "candidate" : "candidates") found so far")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                        .padding(.top, 4)
-                }
+        VStack(spacing: 0) {
+            heading
+                .padding(.top, 28)
+                .padding(.bottom, 18)
+            ScrollView {
+                phaseList
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 8)
             }
+            .frame(maxHeight: .infinity)
+            Divider()
             Button(role: .cancel) {
                 model.cancelLargeFileScan()
             } label: {
                 Text("Cancel")
-                    .frame(minWidth: 90)
+                    .frame(minWidth: 110)
             }
             .buttonStyle(.glass)
             .controlSize(.large)
-            .padding(.top, 8)
+            .padding(.vertical, 16)
         }
-        .padding(48)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var heading: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "scalemass")
+                .font(.system(size: 44, weight: .light))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tint)
+            Text("Ranking the biggest files…")
+                .font(.title3.weight(.semibold))
+            Text("\(completedCount) of \(model.largeFileScanPhases.count) steps complete · \(totalCandidates) \(totalCandidates == 1 ? "candidate" : "candidates") so far")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+    }
+
+    private var phaseList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(model.largeFileScanPhases.enumerated()), id: \.element.id) { idx, phase in
+                phaseRow(phase)
+                if idx < model.largeFileScanPhases.count - 1 {
+                    Divider().padding(.leading, 38)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func phaseRow(_ phase: LargeFileScanPhase) -> some View {
+        HStack(spacing: 12) {
+            statusIcon(for: phase.status)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(phase.displayName)
+                    .font(.callout.weight(phase.status == .inProgress ? .semibold : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(statusDetail(for: phase))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func statusIcon(for status: LargeFileScanPhase.Status) -> some View {
+        switch status {
+        case .pending:
+            Image(systemName: "circle")
+                .font(.body)
+                .foregroundStyle(.tertiary)
+        case .inProgress:
+            ProgressView()
+                .controlSize(.small)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.body)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.green)
+        }
+    }
+
+    private func statusDetail(for phase: LargeFileScanPhase) -> String {
+        switch phase.status {
+        case .pending: "Waiting"
+        case .inProgress: "Scanning…"
+        case .completed: "\(phase.candidatesAfter) \(phase.candidatesAfter == 1 ? "candidate" : "candidates")"
+        }
+    }
+
+    private var completedCount: Int {
+        model.largeFileScanPhases.filter { $0.status == .completed }.count
+    }
+
+    /// Running total of candidates surfaced so far. Phases that are
+    /// pending or in-progress contribute zero, so the figure climbs
+    /// monotonically across the scan even though `candidatesAfter`
+    /// is a per-phase snapshot.
+    private var totalCandidates: Int {
+        model.largeFileScanPhases.map(\.candidatesAfter).max() ?? 0
     }
 }
 
@@ -90,7 +165,7 @@ struct LargeFileResultsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Large files").font(.title2.weight(.semibold))
                 if !model.largeFiles.isEmpty {
-                    Text("\(model.largeFiles.count) above \(byteCountString(model.largeFileMinimumBytes)) · top consumers in your home folder")
+                    Text("\(sizeFilteredFiles.count) above \(byteCountString(model.largeFileMinimumBytes)) · top consumers in your home folder")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -107,15 +182,24 @@ struct LargeFileResultsView: View {
 
     // MARK: Filter bar
 
+    /// Entries that pass the size filter only — the category chip
+    /// counts use this so they reflect what the user would actually
+    /// see if they switched chips, rather than the full pre-filter
+    /// scan result.
+    private var sizeFilteredFiles: [LargeFileEntry] {
+        model.largeFiles.filter { $0.sizeBytes >= model.largeFileMinimumBytes }
+    }
+
     private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let sizeFiltered = sizeFilteredFiles
+        return VStack(alignment: .leading, spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    chip(label: "All", count: model.largeFiles.count, selected: model.largeFileCategoryFilter == nil) {
+                    chip(label: "All", count: sizeFiltered.count, selected: model.largeFileCategoryFilter == nil) {
                         model.largeFileCategoryFilter = nil
                     }
                     ForEach(LargeFileCategory.allCases, id: \.self) { cat in
-                        let count = model.largeFiles.lazy.filter { $0.category == cat }.count
+                        let count = sizeFiltered.lazy.filter { $0.category == cat }.count
                         if count > 0 {
                             chip(
                                 label: cat.rawValue,
@@ -139,7 +223,7 @@ struct LargeFileResultsView: View {
                 ForEach(minimumSizeChoices, id: \.0) { (bytes, label) in
                     let isSelected = model.largeFileMinimumBytes == bytes
                     Button {
-                        model.largeFileMinimumBytes = bytes
+                        model.setLargeFileMinimumBytes(bytes)
                     } label: {
                         Text(label)
                             .font(.caption.weight(isSelected ? .semibold : .regular))
@@ -162,15 +246,31 @@ struct LargeFileResultsView: View {
     }
 
     /// Discrete minimum-size choices shown beside the slider label.
-    /// Spans the practical range — 50 MB picks up large installers and
-    /// crash bundles, 1 GB narrows to the truly outsized.
+    /// Standard rungs match the pre-scan scope sheet's options so the
+    /// user sees a consistent ladder.
+    ///
+    /// Filtered to entries at-or-above the scan floor: if the user
+    /// started the scan with a 5 GB floor there are no surviving
+    /// entries below that, so showing the 50 MB chip would just
+    /// hide everything when clicked.
+    ///
+    /// The scan floor itself is always included, even when it isn't
+    /// one of the standard rungs, so the user can always reset back
+    /// to the originally-chosen value.
     private var minimumSizeChoices: [(Int64, String)] {
-        [
+        let standard: [(Int64, String)] = [
             (50 * 1_024 * 1_024, "50 MB"),
             (100 * 1_024 * 1_024, "100 MB"),
             (500 * 1_024 * 1_024, "500 MB"),
             (1_024 * 1_024 * 1_024, "1 GB"),
+            (5 * 1_024 * 1_024 * 1_024, "5 GB"),
         ]
+        let floor = model.largeFileScanFloorBytes
+        var choices = standard.filter { $0.0 >= floor }
+        if !standard.contains(where: { $0.0 == floor }) {
+            choices.insert((floor, floor.formatted(.byteCount(style: .file))), at: 0)
+        }
+        return choices
     }
 
     private func chip(

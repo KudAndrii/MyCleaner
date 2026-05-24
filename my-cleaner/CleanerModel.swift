@@ -57,17 +57,25 @@ final class CleanerModel {
     /// needed when the user nudges the slider.
     var largeFileMinimumBytes: Int64 = LargeFileScanner.defaultMinimumBytes
 
+    /// Size floor the most recent scan was started with.
+    ///
+    /// The results-view slider hides any standard chip below this
+    /// value, since nothing smaller could ever surface no matter
+    /// where the slider sits. Set once at scan start and not touched
+    /// when the user nudges `largeFileMinimumBytes`.
+    var largeFileScanFloorBytes: Int64 = LargeFileScanner.defaultMinimumBytes
+
     /// User-controlled category filter chip. `nil` means "show every
     /// category"; otherwise only entries in the selected bucket are
     /// visible.
     var largeFileCategoryFilter: LargeFileCategory?
 
-    /// Running count of large-file candidates surfaced so far during
-    /// the in-progress scan. Drives the progress indicator on
-    /// `LargeFileScanningView` — Spotlight + each targeted nest emit
-    /// an update so the user sees the number climb instead of staring
-    /// at a static spinner.
-    var largeFileScanProgress: Int = 0
+    /// Structural progress of the in-flight large-file scan. One
+    /// entry per phase (Spotlight + every nest the user kept
+    /// selected), populated up front in `.pending` so the scanning
+    /// view can render the full step list immediately; entries flip
+    /// to `.inProgress` and `.completed` as the scanner emits events.
+    var largeFileScanPhases: [LargeFileScanPhase] = []
 
     /// The currently-running large-file scan, kept around so the user
     /// can cancel it from the scanning screen.
@@ -264,6 +272,8 @@ final class CleanerModel {
         largeFiles = []
         largeFileCategoryFilter = nil
         largeFileMinimumBytes = LargeFileScanner.defaultMinimumBytes
+        largeFileScanFloorBytes = LargeFileScanner.defaultMinimumBytes
+        largeFileScanPhases = []
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -391,26 +401,42 @@ final class CleanerModel {
     // MARK: - Large-file flow
 
     /// Kicks off the large-file scan and parks the result on
-    /// `largeFiles`. Resets the slider / chip filters back to
-    /// defaults so the user starts with the full ranked list.
+    /// `largeFiles`. Resets the chip filter back to the default so
+    /// the user starts with the full ranked list. The
+    /// `largeFileMinimumBytes` filter is initialised to the same
+    /// floor the scan used so the in-results slider doesn't hide
+    /// surviving entries by default.
+    ///
+    /// - Parameters:
+    ///   - minimumBytes: Smallest size to surface. Used both as the
+    ///     Spotlight floor and the slider's starting position so the
+    ///     in-results filter never hides items the scan itself
+    ///     accepted.
+    ///   - nests: Targeted nests to walk after the Spotlight pass.
+    ///     `nil` walks every nest `LargeFileScanner` knows about.
     ///
     /// The scan runs on a detached task tracked by
     /// `largeFileScanTask` so `cancelLargeFileScan()` can stop it
-    /// mid-walk. Progress updates flow back to the main actor via the
-    /// `onProgress` callback so the scanning view's counter can climb
-    /// while the targeted nests are being walked.
-    func startLargeFileScan() {
+    /// mid-walk. Phase events flow back to the main actor so the
+    /// scanning view's structural progress list can advance in
+    /// real time.
+    func startLargeFileScan(
+        minimumBytes: Int64 = LargeFileScanner.defaultMinimumBytes,
+        nests: [LargeFileNest]? = nil
+    ) {
         errorMessage = nil
         largeFiles = []
         largeFileCategoryFilter = nil
-        largeFileMinimumBytes = LargeFileScanner.defaultMinimumBytes
-        largeFileScanProgress = 0
+        largeFileMinimumBytes = minimumBytes
+        largeFileScanFloorBytes = minimumBytes
+        let walkNests = nests ?? LargeFileScanner.availableNests()
+        largeFileScanPhases = makeInitialPhases(nests: walkNests)
         stage = .largeFileScanning
 
-        let progressHandler: @Sendable (Int) -> Void = { [weak self] count in
+        let eventHandler: @Sendable (LargeFileScanner.ScanEvent) -> Void = { [weak self] event in
             guard let self else { return }
             Task { @MainActor in
-                self.largeFileScanProgress = count
+                self.handleScanEvent(event)
             }
         }
 
@@ -418,7 +444,11 @@ final class CleanerModel {
             guard let self else { return }
             do {
                 let scanned = try await Task.detached(priority: .userInitiated) {
-                    try await LargeFileScanner.scan(onProgress: progressHandler)
+                    try await LargeFileScanner.scan(
+                        minimumBytes: minimumBytes,
+                        nests: walkNests,
+                        onEvent: eventHandler
+                    )
                 }.value
                 try Task.checkCancellation()
                 self.largeFiles = scanned
@@ -439,8 +469,56 @@ final class CleanerModel {
     func cancelLargeFileScan() {
         largeFileScanTask?.cancel()
         largeFileScanTask = nil
-        largeFileScanProgress = 0
+        largeFileScanPhases = []
         stage = .idle
+    }
+
+    /// Updates the size floor and, if the currently-selected category
+    /// chip has no surviving entries at the new floor, falls back to
+    /// "All" so the user doesn't stare at an empty list with a hidden
+    /// filter still applied.
+    func setLargeFileMinimumBytes(_ bytes: Int64) {
+        largeFileMinimumBytes = bytes
+        if let category = largeFileCategoryFilter,
+           !largeFiles.contains(where: { $0.sizeBytes >= bytes && $0.category == category }) {
+            largeFileCategoryFilter = nil
+        }
+    }
+
+    /// Builds the initial `[LargeFileScanPhase]` list (Spotlight first,
+    /// then one entry per nest the user kept selected). Surfaced as a
+    /// helper so `startLargeFileScan` stays a linear read.
+    private func makeInitialPhases(nests: [LargeFileNest]) -> [LargeFileScanPhase] {
+        var phases: [LargeFileScanPhase] = [
+            LargeFileScanPhase(
+                id: LargeFileScanner.spotlightPhaseID,
+                displayName: "Spotlight (home folder)",
+                status: .pending
+            )
+        ]
+        for nest in nests {
+            phases.append(LargeFileScanPhase(
+                id: nest.url.path,
+                displayName: nest.displayName,
+                status: .pending
+            ))
+        }
+        return phases
+    }
+
+    /// Maps a scanner event onto the matching phase entry.
+    private func handleScanEvent(_ event: LargeFileScanner.ScanEvent) {
+        switch event {
+        case .phaseStarted(let id):
+            if let i = largeFileScanPhases.firstIndex(where: { $0.id == id }) {
+                largeFileScanPhases[i].status = .inProgress
+            }
+        case .phaseCompleted(let id, let candidatesAfter):
+            if let i = largeFileScanPhases.firstIndex(where: { $0.id == id }) {
+                largeFileScanPhases[i].status = .completed
+                largeFileScanPhases[i].candidatesAfter = candidatesAfter
+            }
+        }
     }
 
     /// Flips a single large-file entry's selection. No-op for unknown ids.

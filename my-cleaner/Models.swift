@@ -241,6 +241,48 @@ enum LargeFileCategory: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+/// One nest the targeted enumeration can walk.
+///
+/// Identity is the URL; the display name is shown both in the
+/// pre-scan options sheet (so the user can opt out of expensive
+/// nests like `CoreSimulator`) and as the phase label while that
+/// nest is being walked.
+nonisolated struct LargeFileNest: Identifiable, Hashable, Sendable {
+    let url: URL
+    let displayName: String
+    var id: URL { url }
+}
+
+/// One step in the large-file scan, surfaced on the scanning screen
+/// as a structural progress list (Spotlight first, then each
+/// targeted nest the user kept selected).
+///
+/// The model owns `[LargeFileScanPhase]`, pre-populates it with every
+/// known phase in `.pending`, and flips entries to `.inProgress` and
+/// `.completed` as the scanner fires events.
+nonisolated struct LargeFileScanPhase: Identifiable, Hashable, Sendable {
+    /// Stable identifier used by the scanner / model handshake.
+    /// `"spotlight"` for the Spotlight pass, the nest URL's `.path`
+    /// for every targeted nest.
+    let id: String
+
+    /// Human-readable label shown in the scanning view.
+    let displayName: String
+
+    /// Current execution status.
+    var status: Status
+
+    /// Total surviving candidates after this phase finished. `0` while
+    /// pending / in progress.
+    var candidatesAfter: Int = 0
+
+    enum Status: Sendable, Hashable {
+        case pending
+        case inProgress
+        case completed
+    }
+}
+
 // MARK: - Cleanup report
 
 /// The outcome of a cleanup pass — how many items reached the Trash and what,

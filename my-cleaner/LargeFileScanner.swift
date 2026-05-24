@@ -45,45 +45,96 @@ enum LargeFileScanner {
 
     // MARK: - Entry point
 
+    /// Phase-level event the scanner publishes so the scanning view
+    /// can render structural progress (Spotlight pass + one entry per
+    /// targeted nest).
+    enum ScanEvent: Sendable {
+        case phaseStarted(id: String)
+        case phaseCompleted(id: String, candidatesAfter: Int)
+    }
+
+    /// Stable identifier used for the Spotlight phase. Matches the
+    /// id the model uses when pre-populating the phase list.
+    nonisolated static let spotlightPhaseID = "spotlight"
+
+    /// Every nest the targeted enumeration knows about, in the order
+    /// they're walked. Exposed publicly so the pre-scan options sheet
+    /// can render them as toggles and the model can pre-populate the
+    /// phase list with display names matching the scanner's events.
+    nonisolated static func availableNests() -> [LargeFileNest] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let homePath = home.path
+        func nest(_ relative: String, display: String? = nil) -> LargeFileNest {
+            let url = home.appendingPathComponent(relative, isDirectory: true)
+            let label = display ?? {
+                let absolute = url.path
+                if absolute.hasPrefix(homePath) {
+                    return "~" + absolute.dropFirst(homePath.count)
+                }
+                return absolute
+            }()
+            return LargeFileNest(url: url, displayName: label)
+        }
+        return [
+            nest("Library/Developer/CoreSimulator"),
+            nest("Library/Containers/com.docker.docker"),
+            nest("Movies"),
+            nest("Downloads"),
+            nest("Documents"),
+            nest("Desktop"),
+            nest("Virtual Machines.localized"),
+            nest("Parallels"),
+        ]
+    }
+
     /// Runs a full large-file scan.
     ///
     /// - Parameters:
     ///   - minimumBytes: Smallest size to include. Used as the
     ///     `kMDItemFSSize` floor for Spotlight and as a post-filter on
     ///     targeted-enumeration hits.
+    ///   - nests: Which targeted nests to walk after the Spotlight
+    ///     pass. Defaults to every available nest; the pre-scan sheet
+    ///     narrows this down based on user toggles.
     ///   - limit: Maximum number of entries to return; the rest are
     ///     dropped after the result list is sorted by size.
-    ///   - onProgress: Optional callback invoked with the running
-    ///     count of surviving candidates after Spotlight and after
-    ///     each targeted nest. Lets the UI show the user something is
-    ///     happening while the (potentially slow) directory walks run.
+    ///   - onEvent: Optional callback invoked when the scanner enters
+    ///     and exits each phase. The model uses these events to flip
+    ///     a `LargeFileScanPhase` from pending → inProgress →
+    ///     completed so the scanning view's structural list updates
+    ///     in real time.
     /// - Throws: `CancellationError` when the surrounding task is
     ///   cancelled — checked before Spotlight, before each nest, and
     ///   between every URL inside a nest so the user sees a prompt
     ///   response to the Cancel button.
     nonisolated static func scan(
         minimumBytes: Int64 = defaultMinimumBytes,
+        nests: [LargeFileNest]? = nil,
         limit: Int = defaultLimit,
-        onProgress: (@Sendable (Int) -> Void)? = nil
+        onEvent: (@Sendable (ScanEvent) -> Void)? = nil
     ) async throws -> [LargeFileEntry] {
+        let walkNests = nests ?? availableNests()
         var found: [URL: LargeFileEntry] = [:]
 
         try Task.checkCancellation()
+        onEvent?(.phaseStarted(id: spotlightPhaseID))
         let spotlightURLs = spotlightHits(minimumBytes: minimumBytes)
         for url in spotlightURLs {
             try Task.checkCancellation()
             insert(url, minimumBytes: minimumBytes, into: &found)
         }
-        onProgress?(found.count)
+        onEvent?(.phaseCompleted(id: spotlightPhaseID, candidatesAfter: found.count))
 
-        for nest in targetedNests() {
+        for nest in walkNests {
             try Task.checkCancellation()
-            let nestURLs = try enumerateNest(nest, minimumBytes: minimumBytes)
+            onEvent?(.phaseStarted(id: nest.id.path))
+            let nestURLs = try enumerateNest(nest.url, minimumBytes: minimumBytes)
             for url in nestURLs {
                 try Task.checkCancellation()
                 insert(url, minimumBytes: minimumBytes, into: &found)
             }
-            onProgress?(found.count)
+            onEvent?(.phaseCompleted(id: nest.id.path, candidatesAfter: found.count))
         }
 
         let sorted = found.values.sorted { $0.sizeBytes > $1.sizeBytes }
@@ -111,28 +162,6 @@ enum LargeFileScanner {
     }
 
     // MARK: - Targeted enumeration
-
-    /// Well-known nests where the directory walk should top up
-    /// Spotlight's findings.
-    ///
-    /// Some of these are bundle-style directories whose total size
-    /// matters more than any individual file inside (`.fcpbundle`,
-    /// `.simruntime`); Spotlight reports them as folders without an
-    /// `FSSize`, so the directory walk is what surfaces them.
-    private nonisolated static func targetedNests() -> [URL] {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        return [
-            home.appendingPathComponent("Library/Developer/CoreSimulator", isDirectory: true),
-            home.appendingPathComponent("Library/Containers/com.docker.docker", isDirectory: true),
-            home.appendingPathComponent("Movies", isDirectory: true),
-            home.appendingPathComponent("Downloads", isDirectory: true),
-            home.appendingPathComponent("Documents", isDirectory: true),
-            home.appendingPathComponent("Desktop", isDirectory: true),
-            home.appendingPathComponent("Virtual Machines.localized", isDirectory: true),
-            home.appendingPathComponent("Parallels", isDirectory: true),
-        ]
-    }
 
     /// Enumerates a nest and emits every URL that looks like a
     /// large-file candidate.
