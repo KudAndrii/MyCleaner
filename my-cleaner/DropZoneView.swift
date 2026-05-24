@@ -39,9 +39,9 @@ struct DropZoneView: View {
             DuplicateScopeView(
                 selection: $duplicateScope,
                 isPresented: $showDuplicateOptions
-            ) { urls in
+            ) { urls, minimumBytes in
                 showDuplicateOptions = false
-                Task { await model.startDuplicateScan(scope: urls) }
+                Task { await model.startDuplicateScan(scope: urls, minimumBytes: minimumBytes) }
             }
         }
     }

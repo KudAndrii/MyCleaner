@@ -152,7 +152,7 @@ struct DuplicateScannerScanTests {
         // A completely different size — also dropped by the size pass.
         _ = try dir.makeFile(at: "different.bin", contents: Data("nope".utf8))
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         #expect(groups.count == 1)
         #expect(groups.first?.copies.count == 2)
         #expect(groups.first?.sizePerCopy ?? 0 >= Int64(payload.count))
@@ -165,7 +165,7 @@ struct DuplicateScannerScanTests {
         _ = try dir.makeFile(at: "first.bin", contents: payload)
         _ = try dir.makeFile(at: "deep/second.bin", contents: payload)
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         #expect(groups.count == 1)
         let kept = groups.first?.copies.filter { !$0.isSelectedForDeletion } ?? []
         #expect(kept.count == 1)
@@ -179,7 +179,7 @@ struct DuplicateScannerScanTests {
         let linkURL = dir.url.appendingPathComponent("link.bin")
         try FileManager.default.linkItem(at: original, to: linkURL)
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         // Only one logical file on disk — no duplicate group should surface.
         #expect(groups.isEmpty)
     }
@@ -190,7 +190,7 @@ struct DuplicateScannerScanTests {
         _ = try dir.makeFile(at: "a.bin", contents: Data())
         _ = try dir.makeFile(at: "b.bin", contents: Data())
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         #expect(groups.isEmpty)
     }
 
@@ -202,7 +202,7 @@ struct DuplicateScannerScanTests {
         let link = dir.url.appendingPathComponent("link.bin")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         // The symlink points at the real file but isn't itself a
         // duplicate — only one regular file exists.
         #expect(groups.isEmpty)
@@ -235,7 +235,7 @@ struct DuplicateScannerScanTests {
         _ = try dir.makeFile(at: "large-a.bin", contents: large)
         _ = try dir.makeFile(at: "large-b.bin", contents: large)
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         #expect(groups.count == 2)
         #expect(groups.first!.maximumRecoverableBytes >= groups.last!.maximumRecoverableBytes)
     }
@@ -251,7 +251,7 @@ struct DuplicateScannerScanTests {
         }
 
         let task = Task {
-            try await DuplicateScanner.scan(scope: [dir.url])
+            try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         }
         task.cancel()
 
@@ -280,7 +280,7 @@ struct DuplicateScannerScanTests {
         try payload.write(to: resources.appendingPathComponent("inside-a.bin"))
         try payload.write(to: resources.appendingPathComponent("inside-b.bin"))
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         // Exactly one group — the pair outside the .app. The pair inside
         // is invisible to the walk thanks to .skipsPackageDescendants.
         #expect(groups.count == 1)
@@ -303,7 +303,7 @@ struct DuplicateScannerScanTests {
         _ = try dir.makeFile(at: "b2.bin", contents: payloadB)
         _ = try dir.makeFile(at: "lonely.bin", contents: Data(repeating: 0xCC, count: large))
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         // Two duplicate groups, lonely.bin ruled out by the partial pass.
         #expect(groups.count == 2)
         let counts = groups.map(\.copies.count).sorted()
@@ -323,7 +323,7 @@ struct DuplicateScannerScanTests {
         _ = try dir.makeFile(at: "a.bin", contents: a)
         _ = try dir.makeFile(at: "b.bin", contents: b)
 
-        let groups = try await DuplicateScanner.scan(scope: [dir.url])
+        let groups = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1)
         #expect(groups.isEmpty)
     }
 
@@ -341,7 +341,7 @@ struct DuplicateScannerScanTests {
         _ = try dir.makeFile(at: "dup-b.bin", contents: dupePayload)
 
         let updates = ProgressCollector()
-        _ = try await DuplicateScanner.scan(scope: [dir.url]) { update in
+        _ = try await DuplicateScanner.scan(scope: [dir.url], minimumBytes: 1) { update in
             updates.append(update)
         }
 

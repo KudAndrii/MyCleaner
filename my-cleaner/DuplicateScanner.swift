@@ -64,10 +64,40 @@ enum DuplicateScanner {
 
     /// Directory names the walk never descends into.
     ///
-    /// `~/Library` is excluded explicitly because it's owned by the
-    /// per-app and orphan flows; duplicate detection there would
-    /// surface every framework, cache fragment, and preference plist.
-    nonisolated private static let excludedDirectoryNames: Set<String> = ["Library"]
+    /// `Library` is excluded because it's owned by the per-app and
+    /// orphan flows; duplicate detection there would surface every
+    /// framework, cache fragment, and preference plist.
+    ///
+    /// The rest are build artifacts and dependency caches that every
+    /// developer toolchain re-creates from source. Their contents are
+    /// "duplicates" by construction (npm/Cargo/Maven/etc. download the
+    /// same packages into every project), and surfacing them would
+    /// (a) drown real duplicates in noise and (b) tempt the user into
+    /// deleting files that just get re-downloaded.
+    nonisolated private static let excludedDirectoryNames: Set<String> = [
+        "Library",
+        // Build outputs
+        "bin", "obj",                       // .NET, Visual Studio
+        "build", ".build",                  // generic, Swift Package Manager
+        "target",                           // Rust, Maven
+        "dist", "out",                      // generic JS / Rollup / TypeScript
+        "DerivedData",                      // Xcode
+        // Dependency caches
+        "node_modules",                     // Node.js / npm / Yarn / pnpm
+        "Pods",                             // CocoaPods
+        "vendor",                           // PHP / Composer, Ruby / Bundler, Go modules
+        ".gradle",                          // Gradle wrapper cache
+        ".cargo",                           // Cargo
+        // Python virtualenvs and bytecode
+        "venv", ".venv", "env", ".env",
+        "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        // Git plumbing
+        ".git", ".svn", ".hg",
+        // Coverage / test artifacts
+        "coverage", ".nyc_output",
+        // Editor / IDE state
+        ".idea", ".vscode",
+    ]
 
     /// Absolute path prefixes the walk never descends into.
     ///
@@ -95,15 +125,28 @@ enum DuplicateScanner {
     /// show what phase it's in and roughly how far along it is.
     /// Throttled internally by the scanner to ~8 emissions / second.
     nonisolated enum Progress: Sendable, Equatable {
-        /// Walking the scope; `filesSeen` grows monotonically.
-        case enumerating(filesSeen: Int)
+        /// Started walking a new scope folder. The view flips that
+        /// phase's checklist row to `.inProgress`.
+        case folderStarted(id: String)
+
+        /// Walking a scope folder; `filesSeen` is the running count
+        /// inside the current folder.
+        case enumerating(folderID: String, filesSeen: Int)
+
+        /// Finished walking a scope folder; the view flips that
+        /// phase's row to `.completed` and stores the final count.
+        case folderCompleted(id: String, filesSeen: Int)
+
+        /// Started the hash pass. The total is locked in here.
+        case hashStarted(totalToHash: Int)
 
         /// Hashing same-size candidates; the UI can render a
-        /// determinate bar from `filesHashed` / `totalToHash`. The
-        /// total is locked in at the start of the hash pass and
-        /// stays fixed for the rest of the run.
+        /// determinate bar from `filesHashed` / `totalToHash`.
         case hashing(filesHashed: Int, totalToHash: Int)
     }
+
+    /// Stable identifier for the hash phase entry in the checklist.
+    nonisolated static let hashPhaseID = "duplicate-scan-hash"
 
     // MARK: - Entry point
 
@@ -124,8 +167,19 @@ enum DuplicateScanner {
     ///   cancelled. The check runs between every file and every
     ///   hash chunk, so cancellation is observable within a
     ///   fraction of a second even on multi-gigabyte inputs.
+    /// Default minimum file size — 1 MB. Files smaller than this are
+    /// skipped during enumeration. Two reasons, both standard practice
+    /// (`fdupes -minsize`, rmlint, czkawka): (a) below 1 MB the
+    /// recoverable space per duplicate isn't worth the user's
+    /// attention; (b) skipping the long tail of small files keeps
+    /// peak memory proportional to "files worth comparing" rather than
+    /// "every regular file in the scope" — on a typical home folder
+    /// that's a 10-50× working-set reduction.
+    nonisolated static let defaultMinimumBytes: Int64 = 1 * 1024 * 1024
+
     nonisolated static func scan(
         scope: [URL],
+        minimumBytes: Int64 = defaultMinimumBytes,
         progress: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> [DuplicateGroup] {
 
@@ -138,23 +192,30 @@ enum DuplicateScanner {
         // through to the hash pass would explode peak memory. Path
         // strings have copy-on-write storage and stay slim.
         var sizeBuckets: [Int64: [String]] = [:]
-        var filesSeen = 0
         var lastEmit = Date(timeIntervalSince1970: 0)
 
         for root in scope {
             try Task.checkCancellation()
+            let folderID = root.standardizedFileURL.path
+            progress?(.folderStarted(id: folderID))
+            var folderFilesSeen = 0
             try enumerate(at: root) { path, size in
                 try Task.checkCancellation()
+                // Skip files below the floor — the user isn't reaching
+                // for "free 8 KB" duplicates, and dropping the long
+                // tail here keeps peak memory bounded to the files
+                // worth comparing.
+                guard size >= minimumBytes else { return }
                 sizeBuckets[size, default: []].append(path)
-                filesSeen += 1
+                folderFilesSeen += 1
                 let now = Date()
                 if now.timeIntervalSince(lastEmit) >= progressEmitInterval {
-                    progress?(.enumerating(filesSeen: filesSeen))
+                    progress?(.enumerating(folderID: folderID, filesSeen: folderFilesSeen))
                     lastEmit = now
                 }
             }
+            progress?(.folderCompleted(id: folderID, filesSeen: folderFilesSeen))
         }
-        progress?(.enumerating(filesSeen: filesSeen))
 
         // ─── Pass 2: inode dedup + singleton compaction ──────────
         //
@@ -185,6 +246,7 @@ enum DuplicateScanner {
         // ─── Passes 3+4: partial-hash prefilter, then full hash ──
         var hashedCount = 0
         var groups: [DuplicateGroup] = []
+        progress?(.hashStarted(totalToHash: totalToHash))
         progress?(.hashing(filesHashed: 0, totalToHash: totalToHash))
         lastEmit = Date()
 
@@ -203,9 +265,14 @@ enum DuplicateScanner {
                 var byHash: [String: [String]] = [:]
                 for path in candidate.paths {
                     try Task.checkCancellation()
-                    guard let hash = hashFile(at: URL(fileURLWithPath: path)) else { continue }
-                    byHash[hash, default: []].append(path)
-                    hashedCount += 1
+                    // Wrap each per-file hash so the FileHandle and
+                    // any per-call autoreleased ObjC artefacts drain
+                    // after every file, not at function exit.
+                    autoreleasepool {
+                        guard let hash = hashFile(at: URL(fileURLWithPath: path)) else { return }
+                        byHash[hash, default: []].append(path)
+                        hashedCount += 1
+                    }
                     let now = Date()
                     if now.timeIntervalSince(lastEmit) >= progressEmitInterval {
                         progress?(.hashing(filesHashed: hashedCount, totalToHash: totalToHash))
@@ -224,8 +291,10 @@ enum DuplicateScanner {
                 var byPartial: [Data: [String]] = [:]
                 for path in candidate.paths {
                     try Task.checkCancellation()
-                    guard let prefix = partialHash(of: URL(fileURLWithPath: path)) else { continue }
-                    byPartial[prefix, default: []].append(path)
+                    autoreleasepool {
+                        guard let prefix = partialHash(of: URL(fileURLWithPath: path)) else { return }
+                        byPartial[prefix, default: []].append(path)
+                    }
                 }
 
                 // Account for files that the prefilter ruled out so
@@ -240,9 +309,11 @@ enum DuplicateScanner {
                     var byHash: [String: [String]] = [:]
                     for path in partialPaths {
                         try Task.checkCancellation()
-                        guard let hash = hashFile(at: URL(fileURLWithPath: path)) else { continue }
-                        byHash[hash, default: []].append(path)
-                        hashedCount += 1
+                        autoreleasepool {
+                            guard let hash = hashFile(at: URL(fileURLWithPath: path)) else { return }
+                            byHash[hash, default: []].append(path)
+                            hashedCount += 1
+                        }
                         let now = Date()
                         if now.timeIntervalSince(lastEmit) >= progressEmitInterval {
                             progress?(.hashing(filesHashed: hashedCount, totalToHash: totalToHash))
@@ -308,39 +379,48 @@ enum DuplicateScanner {
         ) else { return }
 
         let prefetchSet = Set(prefetch)
+        // Each iteration is wrapped in its own `autoreleasepool` so
+        // the autoreleased `NSURL` objects (and the multi-KB resource
+        // value caches FileManager attaches to them via the prefetch
+        // hint) are released after every file instead of accumulating
+        // until enumeration finishes. Without this, a 1M-file scope
+        // builds up gigabytes of dead URL caches that ARC can't free
+        // because the enclosing `for` loop is one big stack frame.
         for case let url as URL in enumerator {
-            guard let values = try? url.resourceValues(forKeys: prefetchSet) else { continue }
+            try autoreleasepool {
+                guard let values = try? url.resourceValues(forKeys: prefetchSet) else { return }
 
-            if values.isDirectory == true {
-                if shouldSkipDirectory(url) {
-                    enumerator.skipDescendants()
+                if values.isDirectory == true {
+                    if shouldSkipDirectory(url) {
+                        enumerator.skipDescendants()
+                    }
+                    return
                 }
-                continue
-            }
-            if values.isSymbolicLink == true { continue }
-            if values.isAliasFile == true { continue }
-            if values.isRegularFile != true { continue }
-            // iCloud stubs (.icloud placeholders) carry the
-            // notDownloaded status — reading them would either fail
-            // or trigger an unwanted download. Files in
-            // `.downloaded` or `.current` state have real bytes on
-            // disk and are fine to hash.
-            if let status = values.ubiquitousItemDownloadingStatus,
-               status == .notDownloaded {
-                continue
-            }
+                if values.isSymbolicLink == true { return }
+                if values.isAliasFile == true { return }
+                if values.isRegularFile != true { return }
+                // iCloud stubs (.icloud placeholders) carry the
+                // notDownloaded status — reading them would either
+                // fail or trigger an unwanted download. Files in
+                // `.downloaded` or `.current` state have real bytes
+                // on disk and are fine to hash.
+                if let status = values.ubiquitousItemDownloadingStatus,
+                   status == .notDownloaded {
+                    return
+                }
 
-            let size: Int64
-            if let total = values.totalFileAllocatedSize {
-                size = Int64(total)
-            } else if let alloc = values.fileAllocatedSize {
-                size = Int64(alloc)
-            } else {
-                continue
-            }
-            guard size > 0 else { continue }
+                let size: Int64
+                if let total = values.totalFileAllocatedSize {
+                    size = Int64(total)
+                } else if let alloc = values.fileAllocatedSize {
+                    size = Int64(alloc)
+                } else {
+                    return
+                }
+                guard size > 0 else { return }
 
-            try yield(url.path, size)
+                try yield(url.path, size)
+            }
         }
     }
 
@@ -391,14 +471,24 @@ enum DuplicateScanner {
 
         var hasher = SHA256()
         while true {
-            let chunk: Data?
-            do {
-                chunk = try handle.read(upToCount: chunkSize)
-            } catch {
-                return nil
+            // Each read returns an autoreleased `Data` backed by an
+            // Objective-C `NSData`. Without draining the pool here,
+            // a multi-gigabyte file (~1000 × 4 MB chunks) pins gigs
+            // of bytes in the autorelease pool until the surrounding
+            // function returns. Drain after every chunk so peak
+            // memory stays bounded to the single in-flight chunk.
+            let finished: Bool = autoreleasepool {
+                let chunk: Data?
+                do {
+                    chunk = try handle.read(upToCount: chunkSize)
+                } catch {
+                    return true
+                }
+                guard let data = chunk, !data.isEmpty else { return true }
+                hasher.update(data: data)
+                return false
             }
-            guard let data = chunk, !data.isEmpty else { break }
-            hasher.update(data: data)
+            if finished { break }
         }
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()

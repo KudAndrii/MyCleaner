@@ -106,6 +106,13 @@ final class CleanerModel {
     /// an opaque spinner.
     var duplicateScanProgress: DuplicateScanner.Progress?
 
+    /// Structural progress of the in-flight duplicate scan. One entry
+    /// per selected scope folder + one for the hashing pass. Folder
+    /// entries flip through pending → inProgress → completed as the
+    /// walker visits each root; the hash entry tracks
+    /// `filesHashed / totalToHash`.
+    var duplicateScanPhases: [DuplicateScanPhase] = []
+
     var errorMessage: String?
     var isHovering: Bool = false
 
@@ -309,6 +316,7 @@ final class CleanerModel {
         duplicateScanTask?.cancel()
         duplicateScanTask = nil
         duplicateScanProgress = nil
+        duplicateScanPhases = []
         errorMessage = nil
         isHovering = false
         stage = .idle
@@ -707,10 +715,14 @@ final class CleanerModel {
 
     /// Kicks off the duplicate scan and parks the result on
     /// ``duplicateGroups``.
-    func startDuplicateScan(scope: [URL]) async {
+    func startDuplicateScan(
+        scope: [URL],
+        minimumBytes: Int64 = DuplicateScanner.defaultMinimumBytes
+    ) async {
         errorMessage = nil
         duplicateGroups = []
-        duplicateScanProgress = .enumerating(filesSeen: 0)
+        duplicateScanProgress = nil
+        duplicateScanPhases = makeInitialDuplicatePhases(scope: scope)
         stage = .duplicateScanning
 
         let (progressStream, continuation) = AsyncStream<DuplicateScanner.Progress>.makeStream()
@@ -718,12 +730,13 @@ final class CleanerModel {
         let progressTask = Task { @MainActor [weak self] in
             for await update in progressStream {
                 self?.duplicateScanProgress = update
+                self?.handleDuplicateScanEvent(update)
             }
         }
 
         let task = Task.detached(priority: .userInitiated) {
             defer { continuation.finish() }
-            return try await DuplicateScanner.scan(scope: scope) { progress in
+            return try await DuplicateScanner.scan(scope: scope, minimumBytes: minimumBytes) { progress in
                 continuation.yield(progress)
             }
         }
@@ -748,6 +761,65 @@ final class CleanerModel {
 
     func cancelDuplicateScan() {
         duplicateScanTask?.cancel()
+    }
+
+    /// Builds the initial `[DuplicateScanPhase]` list — one entry per
+    /// selected scope folder + a "Comparing content" entry for the
+    /// hash pass.
+    private func makeInitialDuplicatePhases(scope: [URL]) -> [DuplicateScanPhase] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var phases: [DuplicateScanPhase] = scope.map { url in
+            let path = url.standardizedFileURL.path
+            let display: String
+            if path.hasPrefix(home) {
+                display = "~" + path.dropFirst(home.count)
+            } else {
+                display = path
+            }
+            return DuplicateScanPhase(
+                id: path,
+                displayName: display,
+                status: .pending
+            )
+        }
+        phases.append(DuplicateScanPhase(
+            id: DuplicateScanner.hashPhaseID,
+            displayName: "Comparing content",
+            status: .pending
+        ))
+        return phases
+    }
+
+    /// Maps a duplicate scanner event onto the matching phase entry.
+    private func handleDuplicateScanEvent(_ event: DuplicateScanner.Progress) {
+        switch event {
+        case .folderStarted(let id):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == id }) {
+                duplicateScanPhases[i].status = .inProgress
+            }
+        case .enumerating(let folderID, let filesSeen):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == folderID }) {
+                duplicateScanPhases[i].counter = filesSeen
+            }
+        case .folderCompleted(let id, let filesSeen):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == id }) {
+                duplicateScanPhases[i].status = .completed
+                duplicateScanPhases[i].counter = filesSeen
+            }
+        case .hashStarted(let totalToHash):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == DuplicateScanner.hashPhaseID }) {
+                duplicateScanPhases[i].status = .inProgress
+                duplicateScanPhases[i].counterTotal = totalToHash
+            }
+        case .hashing(let filesHashed, let totalToHash):
+            if let i = duplicateScanPhases.firstIndex(where: { $0.id == DuplicateScanner.hashPhaseID }) {
+                duplicateScanPhases[i].counter = filesHashed
+                duplicateScanPhases[i].counterTotal = totalToHash
+                if totalToHash > 0 && filesHashed >= totalToHash {
+                    duplicateScanPhases[i].status = .completed
+                }
+            }
+        }
     }
 
     func toggleDuplicateCopy(groupID: UUID, copyID: UUID) {

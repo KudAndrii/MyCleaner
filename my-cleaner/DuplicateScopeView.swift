@@ -17,17 +17,21 @@ import SwiftUI
 struct DuplicateScopeView: View {
     @Binding var selection: Set<DuplicateScopeFolder>
     @Binding var isPresented: Bool
-    var onStart: ([URL]) -> Void
+    var onStart: ([URL], Int64) -> Void
+
+    @State private var minimumBytes: Int64 = DuplicateScanner.defaultMinimumBytes
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            sizeFilter
+            Divider()
             list
             Divider()
             footer
         }
-        .frame(width: 460, height: 480)
+        .frame(width: 480, height: 560)
     }
 
     private var header: some View {
@@ -47,6 +51,55 @@ struct DuplicateScopeView: View {
             Spacer()
         }
         .padding(20)
+    }
+
+    /// Discrete minimum-size choices. Files below the chosen floor
+    /// are skipped during enumeration — both because small duplicates
+    /// don't move the needle on disk usage and because the long tail
+    /// of tiny files is what makes a million-file scope blow up memory.
+    private var sizeChoices: [(Int64, String)] {
+        [
+            (100 * 1024,             "100 KB"),
+            (1 * 1024 * 1024,        "1 MB"),
+            (10 * 1024 * 1024,       "10 MB"),
+            (100 * 1024 * 1024,      "100 MB"),
+        ]
+    }
+
+    private var sizeFilter: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "ruler")
+                    .foregroundStyle(.secondary)
+                Text("Ignore files smaller than")
+                    .font(.callout.weight(.medium))
+            }
+            HStack(spacing: 6) {
+                ForEach(sizeChoices, id: \.0) { (bytes, label) in
+                    let selected = minimumBytes == bytes
+                    Button {
+                        minimumBytes = bytes
+                    } label: {
+                        Text(label)
+                            .font(.callout.weight(selected ? .semibold : .regular))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(
+                                selected ? AnyShapeStyle(Color.accentColor.opacity(0.20)) : AnyShapeStyle(.background.secondary),
+                                in: .capsule
+                            )
+                            .foregroundStyle(selected ? Color.accentColor : .primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Text("Smaller duplicates rarely free meaningful space, and ignoring them keeps memory usage in check on large folders.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
     }
 
     private var list: some View {
@@ -124,7 +177,7 @@ struct DuplicateScopeView: View {
                 let urls = selection
                     .sorted { $0.rawValue < $1.rawValue }
                     .map(\.url)
-                onStart(urls)
+                onStart(urls, minimumBytes)
             } label: {
                 Label("Start Scan", systemImage: "magnifyingglass")
                     .padding(.horizontal, 4)

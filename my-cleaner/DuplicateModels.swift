@@ -120,3 +120,36 @@ nonisolated enum DuplicateScopeFolder: String, CaseIterable, Identifiable, Senda
         return home.appendingPathComponent(rawValue.capitalized, isDirectory: true)
     }
 }
+
+/// One step in the duplicate scan, surfaced on the scanning screen
+/// as a structural progress list (one entry per selected scope
+/// folder + a "Comparing content" entry for the hash pass).
+///
+/// Same shape as `LargeFileScanPhase` / `CacheScanPhase` so the
+/// scanning view code can lean on the same render pattern.
+nonisolated struct DuplicateScanPhase: Identifiable, Hashable, Sendable {
+    /// Stable identifier used by the scanner / model handshake.
+    /// Folder phases use the URL path; the hash phase uses
+    /// ``DuplicateScanner/hashPhaseID``.
+    let id: String
+
+    /// Human-readable label shown in the scanning view.
+    let displayName: String
+
+    /// Current execution status.
+    var status: Status
+
+    /// Per-phase counter — files visited for folder phases, files
+    /// hashed for the hash phase. `0` while pending.
+    var counter: Int = 0
+
+    /// For the hash phase only: total candidates to hash. `0` for
+    /// folder phases.
+    var counterTotal: Int = 0
+
+    enum Status: Sendable, Hashable {
+        case pending
+        case inProgress
+        case completed
+    }
+}

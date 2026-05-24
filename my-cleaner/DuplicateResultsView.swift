@@ -15,72 +15,122 @@ struct DuplicateScanningView: View {
     @Bindable var model: CleanerModel
 
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "doc.on.doc.fill")
-                .font(.system(size: 72, weight: .light))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-
-            progressIndicator
-                .frame(maxWidth: 360)
-
-            VStack(spacing: 4) {
-                Text(headlineText)
-                    .font(.title3.weight(.semibold))
-                Text(subtitleText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 440)
-                    .monospacedDigit()
+        VStack(spacing: 0) {
+            heading
+                .padding(.top, 28)
+                .padding(.bottom, 18)
+            ScrollView {
+                phaseList
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 8)
             }
-
+            .frame(maxHeight: .infinity)
+            Divider()
             Button(role: .cancel) {
                 model.cancelDuplicateScan()
             } label: {
                 Text("Cancel")
-                    .frame(minWidth: 90)
+                    .frame(minWidth: 110)
             }
             .buttonStyle(.glass)
             .controlSize(.large)
-            .padding(.top, 8)
+            .padding(.vertical, 16)
         }
-        .padding(48)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var heading: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "doc.on.doc.fill")
+                .font(.system(size: 44, weight: .light))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tint)
+            Text("Looking for duplicate files…")
+                .font(.title3.weight(.semibold))
+            Text("\(completedCount) of \(model.duplicateScanPhases.count) steps complete")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+    }
+
+    private var phaseList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(model.duplicateScanPhases.enumerated()), id: \.element.id) { idx, phase in
+                phaseRow(phase)
+                if idx < model.duplicateScanPhases.count - 1 {
+                    Divider().padding(.leading, 38)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func phaseRow(_ phase: DuplicateScanPhase) -> some View {
+        HStack(spacing: 12) {
+            statusIcon(for: phase.status)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(phase.displayName)
+                    .font(.callout.weight(phase.status == .inProgress ? .semibold : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(statusDetail(for: phase))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
     @ViewBuilder
-    private var progressIndicator: some View {
-        switch model.duplicateScanProgress {
-        case .hashing(let done, let total) where total > 0:
-            ProgressView(value: Double(done), total: Double(total))
-                .progressViewStyle(.linear)
-        default:
+    private func statusIcon(for status: DuplicateScanPhase.Status) -> some View {
+        switch status {
+        case .pending:
+            Image(systemName: "circle")
+                .font(.body)
+                .foregroundStyle(.tertiary)
+        case .inProgress:
             ProgressView()
-                .controlSize(.large)
+                .controlSize(.small)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.body)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.green)
         }
     }
 
-    private var headlineText: String {
-        switch model.duplicateScanProgress {
-        case .enumerating: "Scanning files…"
-        case .hashing: "Comparing content…"
-        case .none: "Looking for duplicate files…"
+    private func statusDetail(for phase: DuplicateScanPhase) -> String {
+        let isHashPhase = phase.id == DuplicateScanner.hashPhaseID
+        switch phase.status {
+        case .pending:
+            return "Waiting"
+        case .inProgress:
+            if isHashPhase, phase.counterTotal > 0 {
+                let pct = Int((Double(phase.counter) / Double(phase.counterTotal)) * 100)
+                return "Hashed \(phase.counter.formatted()) of \(phase.counterTotal.formatted()) (\(pct)%)"
+            }
+            if isHashPhase {
+                return "Comparing content…"
+            }
+            return "Visited \(phase.counter.formatted()) \(phase.counter == 1 ? "file" : "files")"
+        case .completed:
+            if isHashPhase {
+                return "Hashed \(phase.counter.formatted()) of \(phase.counterTotal.formatted())"
+            }
+            return "\(phase.counter.formatted()) \(phase.counter == 1 ? "file" : "files")"
         }
     }
 
-    private var subtitleText: String {
-        switch model.duplicateScanProgress {
-        case .enumerating(let n):
-            return "Visited \(n.formatted()) \(n == 1 ? "file" : "files") so far."
-        case .hashing(let done, let total) where total > 0:
-            let pct = Int((Double(done) / Double(total)) * 100)
-            return "Hashed \(done.formatted()) of \(total.formatted()) candidates (\(pct)%)."
-        case .hashing:
-            return "Hashing same-size candidates…"
-        case .none:
-            return "Comparing every file by size first, then by content. Large folders can take a minute."
-        }
+    private var completedCount: Int {
+        model.duplicateScanPhases.filter { $0.status == .completed }.count
     }
 }
 
