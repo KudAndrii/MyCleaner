@@ -8,13 +8,19 @@ import AppKit
 
 struct OrphanScanningView: View {
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 72, weight: .light))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+        VStack(spacing: 20) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.indigo.opacity(0.22))
+                Image(systemName: "tray.2.fill")
+                    .font(.system(size: 36, weight: .regular))
+                    .foregroundStyle(.indigo)
+            }
+            .frame(width: 76, height: 76)
+
             ProgressView()
                 .controlSize(.large)
+
             VStack(spacing: 4) {
                 Text("Scanning for leftovers…")
                     .font(.title3.weight(.semibold))
@@ -37,13 +43,11 @@ struct OrphanResultsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             if model.orphanGroups.isEmpty {
                 emptyState
             } else {
                 list
             }
-            Divider()
             footer
         }
         .alert("Move \(model.orphanSelectedCount) \(model.orphanSelectedCount == 1 ? "item" : "items") to the Trash?",
@@ -73,13 +77,18 @@ struct OrphanResultsView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "tray.2.fill")
-                .font(.system(size: 36))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Orphaned files").font(.title2.weight(.semibold))
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.indigo.opacity(0.22))
+                Image(systemName: "tray.2.fill")
+                    .font(.title)
+                    .foregroundStyle(.indigo)
+            }
+            .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("App leftovers").font(.title.weight(.semibold))
                 if !model.orphanGroups.isEmpty {
                     Text("\(model.orphanGroups.count) bundle IDs · \(byteCountString(model.orphanTotalSize)) recoverable")
                         .font(.caption)
@@ -93,7 +102,8 @@ struct OrphanResultsView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 20)
+        .background(.bar)
     }
 
     private var emptyState: some View {
@@ -108,6 +118,15 @@ struct OrphanResultsView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
+            Button {
+                model.reset()
+            } label: {
+                Text("OK").frame(minWidth: 100)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
@@ -179,7 +198,7 @@ struct OrphanResultsView: View {
             .padding(.top, 2)
         }
         .padding(14)
-        .background(.background.secondary, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
 
     private func itemRow(_ item: RelatedItem) -> some View {
@@ -256,7 +275,10 @@ struct OrphanResultsView: View {
             .controlSize(.large)
             .disabled(model.orphanSelectedCount == 0)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .opacity(model.orphanGroups.isEmpty ? 0 : 1)
+        .background(.bar)
     }
 
     private var selectedGroupCount: Int {

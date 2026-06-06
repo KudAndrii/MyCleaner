@@ -1,0 +1,230 @@
+//
+//  ScanCache.swift
+//  my-cleaner
+//
+//  Cross-session snapshot of the most recent scan per tool, so the
+//  home screen can surface "9.2 GB · 14 places"-style stats without
+//  re-scanning. Each per-tool snapshot stores enough information to
+//  re-validate the cache against the live filesystem (drop entries
+//  the user has since trashed) and recompute the displayed totals.
+//
+
+import Foundation
+
+/// Top-level cache snapshot persisted by ``ScanCacheStore``.
+///
+/// One field per home-screen tool. Each field is `nil` until the user
+/// has run that tool at least once.
+nonisolated struct ScanCache: Codable, Sendable, Equatable {
+    var orphans: OrphansSnapshot?
+    var largeFiles: LargeFilesSnapshot?
+    var oversizedCaches: OversizedCachesSnapshot?
+    var duplicates: DuplicatesSnapshot?
+
+    static let empty = ScanCache()
+}
+
+/// Snapshot of the last orphan scan.
+nonisolated struct OrphansSnapshot: Codable, Sendable, Equatable {
+    var scannedAt: Date
+    var groups: [Group]
+
+    struct Group: Codable, Sendable, Equatable {
+        var bundleID: String
+        var items: [Item]
+    }
+
+    struct Item: Codable, Sendable, Equatable {
+        var path: String
+        var sizeBytes: Int64
+    }
+}
+
+/// Snapshot of the last large-file scan.
+nonisolated struct LargeFilesSnapshot: Codable, Sendable, Equatable {
+    var scannedAt: Date
+    var items: [Item]
+
+    struct Item: Codable, Sendable, Equatable {
+        var path: String
+        var sizeBytes: Int64
+    }
+}
+
+/// Snapshot of the last oversized-caches scan.
+nonisolated struct OversizedCachesSnapshot: Codable, Sendable, Equatable {
+    var scannedAt: Date
+    var groups: [Group]
+
+    struct Group: Codable, Sendable, Equatable {
+        var id: String
+        var entries: [Entry]
+    }
+
+    struct Entry: Codable, Sendable, Equatable {
+        var path: String
+        var sizeBytes: Int64
+    }
+}
+
+/// Snapshot of the last duplicate scan.
+///
+/// `paths` is the raw list of every copy in the group. The
+/// "recoverable" count and bytes are derived as `(paths.count - 1) ×
+/// sizePerCopy` on the assumption the user keeps one copy.
+nonisolated struct DuplicatesSnapshot: Codable, Sendable, Equatable {
+    var scannedAt: Date
+    var groups: [Group]
+
+    struct Group: Codable, Sendable, Equatable {
+        var sizePerCopy: Int64
+        var paths: [String]
+    }
+}
+
+/// One home-screen tile's headline stat.
+nonisolated struct HomeStat: Equatable, Sendable {
+    let totalBytes: Int64
+    let count: Int
+}
+
+/// Per-tool state of the insight card's four fixed rows. Drives the
+/// state-aware copy ("Run a scan" vs "9.2 GB · 14 places" vs
+/// "Nothing found" vs "7 days ago — re-scan?").
+nonisolated enum ToolRowState: Equatable, Sendable {
+    case notScanned
+    case empty(scannedAt: Date)
+    case data(bytes: Int64, count: Int, scannedAt: Date)
+    case stale(bytes: Int64, count: Int, scannedAt: Date)
+}
+
+/// Cutoff between a "fresh" and "stale" cached scan.
+nonisolated let scanStaleThreshold: TimeInterval = 7 * 24 * 60 * 60
+
+extension ScanCache {
+    /// One slice of the home-screen "Reclaimable space" stacked bar.
+    /// Lives on the model side so the view layer doesn't have to walk
+    /// every snapshot to build the breakdown.
+    struct ReclaimableSegment: Equatable, Sendable {
+        /// Stable identifier — also the legend label.
+        let label: String
+        let bytes: Int64
+    }
+
+    /// Per-tool breakdown of recoverable space, in the order the
+    /// view should render them. Tools with no surviving cache are
+    /// dropped so an empty list signals "no scans yet".
+    var reclaimableSegments: [ReclaimableSegment] {
+        var segments: [ReclaimableSegment] = []
+        if let stat = orphanStat {
+            segments.append(.init(label: "App leftovers", bytes: stat.totalBytes))
+        }
+        if let stat = largeFileStat {
+            segments.append(.init(label: "Large files", bytes: stat.totalBytes))
+        }
+        if let stat = oversizedCacheStat {
+            segments.append(.init(label: "Oversized caches", bytes: stat.totalBytes))
+        }
+        if let stat = duplicateStat {
+            segments.append(.init(label: "Duplicate files", bytes: stat.totalBytes))
+        }
+        return segments
+    }
+
+    /// Sum of every surviving tool's recoverable bytes.
+    var reclaimableTotal: Int64 {
+        reclaimableSegments.map(\.bytes).reduce(0, +)
+    }
+
+    /// `true` once any tool has been scanned, regardless of result.
+    /// Flips the home insight card from the storage-overview state
+    /// to the per-tool breakdown.
+    var hasAnyScans: Bool {
+        orphans != nil || largeFiles != nil || oversizedCaches != nil || duplicates != nil
+    }
+
+    // MARK: - Per-tool row state
+
+    func orphanRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = orphans else { return .notScanned }
+        let bytes = snapshot.groups.flatMap(\.items).map(\.sizeBytes).reduce(0, +)
+        let count = snapshot.groups.count
+        return rowState(count: count, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    func largeFileRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = largeFiles else { return .notScanned }
+        let bytes = snapshot.items.map(\.sizeBytes).reduce(0, +)
+        let count = snapshot.items.count
+        return rowState(count: count, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    func oversizedCacheRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = oversizedCaches else { return .notScanned }
+        let bytes = snapshot.groups.flatMap(\.entries).map(\.sizeBytes).reduce(0, +)
+        let count = snapshot.groups.count
+        return rowState(count: count, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    func duplicateRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = duplicates else { return .notScanned }
+        var bytes: Int64 = 0
+        var dupes = 0
+        for group in snapshot.groups where group.paths.count > 1 {
+            let extras = group.paths.count - 1
+            bytes += group.sizePerCopy * Int64(extras)
+            dupes += extras
+        }
+        return rowState(count: dupes, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    private func rowState(count: Int, bytes: Int64, scannedAt: Date, now: Date) -> ToolRowState {
+        if count == 0 { return .empty(scannedAt: scannedAt) }
+        if now.timeIntervalSince(scannedAt) > scanStaleThreshold {
+            return .stale(bytes: bytes, count: count, scannedAt: scannedAt)
+        }
+        return .data(bytes: bytes, count: count, scannedAt: scannedAt)
+    }
+
+    /// `nil` when the orphan scan has never been run (or every group
+    /// has been pruned).
+    var orphanStat: HomeStat? {
+        guard let snapshot = orphans, !snapshot.groups.isEmpty else { return nil }
+        let bytes = snapshot.groups
+            .flatMap(\.items)
+            .map(\.sizeBytes)
+            .reduce(0, +)
+        return HomeStat(totalBytes: bytes, count: snapshot.groups.count)
+    }
+
+    var largeFileStat: HomeStat? {
+        guard let snapshot = largeFiles, !snapshot.items.isEmpty else { return nil }
+        let bytes = snapshot.items.map(\.sizeBytes).reduce(0, +)
+        return HomeStat(totalBytes: bytes, count: snapshot.items.count)
+    }
+
+    var oversizedCacheStat: HomeStat? {
+        guard let snapshot = oversizedCaches, !snapshot.groups.isEmpty else { return nil }
+        let bytes = snapshot.groups
+            .flatMap(\.entries)
+            .map(\.sizeBytes)
+            .reduce(0, +)
+        return HomeStat(totalBytes: bytes, count: snapshot.groups.count)
+    }
+
+    /// Duplicates collapse on a "keep one copy per group" assumption —
+    /// reportable count and bytes are everything beyond the first
+    /// copy of each group.
+    var duplicateStat: HomeStat? {
+        guard let snapshot = duplicates, !snapshot.groups.isEmpty else { return nil }
+        var bytes: Int64 = 0
+        var dupes = 0
+        for group in snapshot.groups where group.paths.count > 1 {
+            let extras = group.paths.count - 1
+            bytes += group.sizePerCopy * Int64(extras)
+            dupes += extras
+        }
+        guard dupes > 0 else { return nil }
+        return HomeStat(totalBytes: bytes, count: dupes)
+    }
+}

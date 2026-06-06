@@ -20,26 +20,24 @@ struct ResultsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             if model.items.isEmpty && model.systemExtensions.isEmpty && model.loginItems.isEmpty {
                 emptyState
             } else {
                 list
             }
-            Divider()
             footer
         }
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 16) {
             if let app = model.droppedApp {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path))
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 52, height: 52)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(app.name).font(.title2.weight(.semibold))
+                    .frame(width: 64, height: 64)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(app.name).font(.title.weight(.semibold))
                     if let bid = app.bundleID {
                         Text(bid)
                             .font(.caption)
@@ -51,7 +49,7 @@ struct ResultsView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text(byteCountString(model.appSize))
-                    .font(.callout.weight(.semibold))
+                    .font(.title2.weight(.semibold))
                     .monospacedDigit()
                 Text("App size")
                     .font(.caption)
@@ -66,7 +64,8 @@ struct ResultsView: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 20)
+        .background(.bar)
     }
 
     private var emptyState: some View {
@@ -153,23 +152,41 @@ struct ResultsView: View {
                     }
                 }
             }
-            .background(.background.secondary, in: .rect(cornerRadius: 14))
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
         }
     }
 
     private var loginItemsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "person.crop.circle.badge.clock.fill")
-                    .foregroundStyle(.tint)
-                Text("Login Items (background)")
-                    .font(.subheadline.weight(.semibold))
-                if model.loginItemsEnabled, !model.loginItems.isEmpty {
-                    Text("· \(model.loginItems.count)")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(.blue.opacity(0.22))
+                    Image(systemName: "person.crop.circle.badge.clock.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.blue)
+                }
+                .frame(width: 38, height: 38)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Login Items")
+                            .font(.callout.weight(.semibold))
+                        Text("· background")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if model.loginItemsEnabled, !model.loginItems.isEmpty {
+                            Text("· \(model.loginItems.count)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(loginItemsExplainer)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
+                Spacer(minLength: 12)
                 Toggle("", isOn: loginItemsBinding)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -178,12 +195,8 @@ struct ResultsView: View {
                           ? "Hide registered login items."
                           : "Check registered login items. macOS will prompt for an admin password (once per app launch).")
             }
-            .padding(.horizontal, 8)
-
-            Text(loginItemsExplainer)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
+            .padding(14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
 
             if model.loginItemsEnabled {
                 if model.loginItems.isEmpty {
@@ -193,7 +206,7 @@ struct ResultsView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.background.secondary, in: .rect(cornerRadius: 14))
+                        .glassEffect(.regular, in: .rect(cornerRadius: 14))
                 } else {
                     VStack(spacing: 0) {
                         ForEach(Array(model.loginItems.enumerated()), id: \.element.id) { idx, item in
@@ -203,7 +216,7 @@ struct ResultsView: View {
                             }
                         }
                     }
-                    .background(.background.secondary, in: .rect(cornerRadius: 14))
+                    .glassEffect(.regular, in: .rect(cornerRadius: 14))
                 }
             }
         }
@@ -289,10 +302,10 @@ struct ResultsView: View {
     @ViewBuilder
     private func section(category: RelatedItem.Category, items: [RelatedItem]) -> some View {
         let totalSize = items.map(\.sizeBytes).reduce(0, +)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: category.symbol)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(categoryTint(category))
                 Text(category.rawValue)
                     .font(.subheadline.weight(.semibold))
                 Text("· \(items.count)")
@@ -300,7 +313,7 @@ struct ResultsView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text(byteCountString(totalSize))
-                    .font(.caption)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
@@ -314,7 +327,30 @@ struct ResultsView: View {
                     }
                 }
             }
-            .background(.background.secondary, in: .rect(cornerRadius: 14))
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        }
+    }
+
+    /// Maps a `RelatedItem.Category` to a presentation tint so each
+    /// section header reads as colour-coded rather than a wall of
+    /// accent blue. Picked to roughly match the iconography (caches
+    /// → drive teal, preferences → gear orange, etc.).
+    private func categoryTint(_ category: RelatedItem.Category) -> Color {
+        switch category {
+        case .applicationSupport: .blue
+        case .caches: .teal
+        case .preferences: .orange
+        case .containers: .indigo
+        case .groupContainers: .purple
+        case .logs: .gray
+        case .crashReports: .red
+        case .savedState: .mint
+        case .cookies: .pink
+        case .launchItems: .green
+        case .installerFiles: .brown
+        case .scripts: .yellow
+        case .iCloud: .cyan
+        case .other: .gray
         }
     }
 
@@ -415,7 +451,9 @@ struct ResultsView: View {
             .tint(.red)
             .controlSize(.large)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.bar)
     }
 
     private func byteCountString(_ b: Int64) -> String {

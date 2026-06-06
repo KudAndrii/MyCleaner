@@ -161,6 +161,128 @@ nonisolated struct RelatedItem: Identifiable, Hashable, Sendable {
     }
 }
 
+// MARK: - Large files
+
+/// One large-file candidate surfaced by ``LargeFileScanner``.
+///
+/// Identity is the on-disk URL — same convention as ``RelatedItem`` —
+/// so the same selection / toggle plumbing works without translation.
+nonisolated struct LargeFileEntry: Identifiable, Hashable, Sendable {
+    /// Identity is the entry's URL.
+    var id: URL { url }
+
+    /// On-disk URL of the entry (standardized).
+    let url: URL
+
+    /// Human-readable label shown in the results list. Usually the
+    /// filename, except for simulator runtimes where the bundle's
+    /// `CFBundleDisplayName` is preferred so users see the iOS
+    /// version instead of a UUID path component.
+    let displayName: String
+
+    /// Allocated size of the entry on disk, in bytes.
+    let sizeBytes: Int64
+
+    /// Whether the entry is a directory (governs how size was summed).
+    let isDirectory: Bool
+
+    /// Which bucket this entry belongs to (drives the section chips).
+    let category: LargeFileCategory
+
+    /// File-system modification date, when readable.
+    let modificationDate: Date?
+
+    /// Whether the user has currently selected this entry for deletion.
+    var isSelected: Bool
+
+    init(
+        url: URL,
+        displayName: String,
+        sizeBytes: Int64,
+        isDirectory: Bool,
+        category: LargeFileCategory,
+        modificationDate: Date?,
+        isSelected: Bool = false
+    ) {
+        self.url = url
+        self.displayName = displayName
+        self.sizeBytes = sizeBytes
+        self.isDirectory = isDirectory
+        self.category = category
+        self.modificationDate = modificationDate
+        self.isSelected = isSelected
+    }
+}
+
+/// Buckets the large-file results view groups entries into.
+///
+/// The raw value is the user-visible chip label. The order of
+/// `allCases` is the order chips are rendered in.
+enum LargeFileCategory: String, CaseIterable, Hashable, Sendable {
+    case virtualMachine = "Virtual Machines"
+    case diskImage = "Disk Images"
+    case video = "Videos"
+    case archive = "Archives"
+    case simulatorRuntime = "Simulator Runtimes"
+    case developerCache = "Developer Caches"
+    case other = "Other"
+
+    /// SF Symbol name shown next to the chip / row.
+    var symbol: String {
+        switch self {
+        case .virtualMachine: "macwindow.on.rectangle"
+        case .diskImage: "opticaldisc.fill"
+        case .video: "film.fill"
+        case .archive: "archivebox.fill"
+        case .simulatorRuntime: "iphone.gen3"
+        case .developerCache: "hammer.fill"
+        case .other: "doc.fill"
+        }
+    }
+}
+
+/// One nest the targeted enumeration can walk.
+///
+/// Identity is the URL; the display name is shown both in the
+/// pre-scan options sheet (so the user can opt out of expensive
+/// nests like `CoreSimulator`) and as the phase label while that
+/// nest is being walked.
+nonisolated struct LargeFileNest: Identifiable, Hashable, Sendable {
+    let url: URL
+    let displayName: String
+    var id: URL { url }
+}
+
+/// One step in the large-file scan, surfaced on the scanning screen
+/// as a structural progress list (Spotlight first, then each
+/// targeted nest the user kept selected).
+///
+/// The model owns `[LargeFileScanPhase]`, pre-populates it with every
+/// known phase in `.pending`, and flips entries to `.inProgress` and
+/// `.completed` as the scanner fires events.
+nonisolated struct LargeFileScanPhase: Identifiable, Hashable, Sendable {
+    /// Stable identifier used by the scanner / model handshake.
+    /// `"spotlight"` for the Spotlight pass, the nest URL's `.path`
+    /// for every targeted nest.
+    let id: String
+
+    /// Human-readable label shown in the scanning view.
+    let displayName: String
+
+    /// Current execution status.
+    var status: Status
+
+    /// Total surviving candidates after this phase finished. `0` while
+    /// pending / in progress.
+    var candidatesAfter: Int = 0
+
+    enum Status: Sendable, Hashable {
+        case pending
+        case inProgress
+        case completed
+    }
+}
+
 // MARK: - Cleanup report
 
 /// The outcome of a cleanup pass — how many items reached the Trash and what,

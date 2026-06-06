@@ -33,20 +33,26 @@ struct PermissionsView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.blue.opacity(0.22))
                 Image(systemName: "lock.open.fill")
                     .font(.title2)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.tint)
-                Text("Grant permissions").font(.title2.weight(.semibold))
+                    .foregroundStyle(.blue)
             }
-            Text("My Cleaner needs two permissions to find and remove every file an app leaves behind. Click Grant to trigger macOS's prompt, or open System Settings if you've already denied a request.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            .frame(width: 48, height: 48)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Grant permissions").font(.title2.weight(.semibold))
+                Text("My Cleaner needs two permissions to find and remove every file an app leaves behind. Click Grant to trigger macOS's prompt, or open System Settings if you've already denied a request.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(20)
+        .background(.bar)
     }
 
     @ViewBuilder
@@ -94,7 +100,7 @@ struct PermissionsView: View {
             }
         }
         .padding(14)
-        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
     }
 
     @ViewBuilder
@@ -182,7 +188,7 @@ struct PermissionsView: View {
             }
         }
         .padding(14)
-        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
     }
 
     @ViewBuilder
@@ -230,6 +236,8 @@ struct PermissionsView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.bar)
     }
 }

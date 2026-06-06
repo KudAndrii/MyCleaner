@@ -293,4 +293,89 @@ struct AppScannerWordBoundaryTests {
     func nonPrefixFails() {
         #expect(AppScanner.wordBoundaryPrefix("xrider2", prefix: "rider") == false)
     }
+
+    @Test("Tightened boundary rejects space when allowSpaceBoundary is false")
+    func descendedRejectsSpace() {
+        // Plain call (top-level scan) — space still counts as a boundary.
+        #expect(AppScanner.wordBoundaryPrefix("code cache", prefix: "code") == true)
+        // Descended call — space no longer counts, so "Code Cache" inside
+        // some other Electron app's data folder doesn't get attributed to
+        // a dropped app whose name hint is "code".
+        #expect(AppScanner.wordBoundaryPrefix("code cache", prefix: "code", allowSpaceBoundary: false) == false)
+    }
+
+    @Test("Tightened boundary still accepts digit / dot / dash boundaries")
+    func descendedKeepsOtherBoundaries() {
+        // Versioned product folders under a vendor namespace still need
+        // to match when descended (the JetBrains -> Rider2024.3 case).
+        #expect(AppScanner.wordBoundaryPrefix("rider2024.3", prefix: "rider", allowSpaceBoundary: false) == true)
+        #expect(AppScanner.wordBoundaryPrefix("rider.config", prefix: "rider", allowSpaceBoundary: false) == true)
+        #expect(AppScanner.wordBoundaryPrefix("rider-config", prefix: "rider", allowSpaceBoundary: false) == true)
+    }
+}
+
+@Suite("AppScanner.classify — descended Electron internals")
+struct AppScannerClassifyDescendedTests {
+
+    private func makeApp(name: String, bundleID: String?) throws -> DroppedApp {
+        try AppScannerClassifyTestsHelper.makeApp(name: name, bundleID: bundleID)
+    }
+
+    @Test("'Code Cache' inside another app's folder is not attributed to a dropped 'Code' app at descent")
+    func chromiumCodeCacheRejectedOnDescent() throws {
+        // VSCode bundle ID; descended call simulates the second-level
+        // walk inside e.g. ~/Library/Application Support/Docker Desktop/.
+        let app = try makeApp(name: "Code", bundleID: "com.microsoft.VSCode")
+        let entry = URL(fileURLWithPath: "/tmp/Code Cache")
+        let result = AppScanner.classify(
+            entry: entry,
+            app: app,
+            teamID: nil,
+            nameHints: ["code", "vscode"],
+            category: .applicationSupport,
+            descended: true
+        )
+        #expect(result.matched == false)
+    }
+
+    @Test("'Code Cache' at the top of Application Support still matches (legacy behaviour)")
+    func chromiumCodeCacheAcceptedAtTop() throws {
+        // Without descent, the existing word-boundary rule keeps
+        // accepting space, so a literal top-level 'Code Cache' folder
+        // (rare but technically possible) still attributes.
+        let app = try makeApp(name: "Code", bundleID: "com.microsoft.VSCode")
+        let entry = URL(fileURLWithPath: "/tmp/Code Cache")
+        let result = AppScanner.classify(
+            entry: entry,
+            app: app,
+            teamID: nil,
+            nameHints: ["code", "vscode"],
+            category: .applicationSupport,
+            descended: false
+        )
+        #expect(result.matched == true)
+    }
+}
+
+/// Bridge to reuse the private `makeApp` helper from
+/// `AppScannerClassifyTests` without re-implementing the .app bundle
+/// stub. Both suites live in the same file so this just exposes the
+/// existing throwing helper to the new suite.
+private enum AppScannerClassifyTestsHelper {
+    static func makeApp(name: String, bundleID: String?) throws -> DroppedApp {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("app")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let contents = url.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        var plist: [String: Any] = ["CFBundleName": name]
+        if let bundleID { plist["CFBundleIdentifier"] = bundleID }
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try data.write(to: contents.appendingPathComponent("Info.plist"))
+        guard let dropped = DroppedApp(url: url) else {
+            throw NSError(domain: "test", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to create DroppedApp"])
+        }
+        return dropped
+    }
 }

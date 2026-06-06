@@ -72,3 +72,6 @@ build/
 # Local scratch / debug folder — not tracked. Assets referenced by
 # README.md live in repo-assets/ instead.
 debug/
+
+# Design prototype (reference-only, not source code)
+design/

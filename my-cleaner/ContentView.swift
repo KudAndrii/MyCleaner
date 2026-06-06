@@ -44,6 +44,12 @@ struct ContentView: View {
         case .done: 4
         case .orphanScanning: 5
         case .orphanResults: 6
+        case .largeFileScanning: 7
+        case .largeFileResults: 8
+        case .cacheScanning: 9
+        case .cacheResults: 10
+        case .duplicateScanning: 11
+        case .duplicateResults: 12
         }
     }
 
@@ -51,7 +57,7 @@ struct ContentView: View {
     private var content: some View {
         switch model.stage {
         case .idle:
-            DropZoneView(model: model, permissions: permissions) {
+            HomeView(model: model, permissions: permissions) {
                 permissions.refresh()
                 scannerHealth.refresh()
                 showPermissions = true
@@ -68,33 +74,25 @@ struct ContentView: View {
             OrphanScanningView()
         case .orphanResults:
             OrphanResultsView(model: model)
+        case .largeFileScanning:
+            LargeFileScanningView(model: model)
+        case .largeFileResults:
+            LargeFileResultsView(model: model)
+        case .cacheScanning:
+            CacheScanningView(model: model)
+        case .cacheResults:
+            CacheResultsView(model: model)
+        case .duplicateScanning:
+            DuplicateScanningView(model: model)
+        case .duplicateResults:
+            DuplicateResultsView(model: model)
         }
     }
 
     private var backgroundLayer: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .underPageBackgroundColor),
-                    Color(nsColor: .windowBackgroundColor)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [.accentColor.opacity(0.18), .clear],
-                center: .topLeading,
-                startRadius: 40,
-                endRadius: 520
-            )
-            RadialGradient(
-                colors: [.purple.opacity(0.12), .clear],
-                center: .bottomTrailing,
-                startRadius: 60,
-                endRadius: 560
-            )
-        }
-        .ignoresSafeArea()
+        Rectangle()
+            .fill(.regularMaterial)
+            .ignoresSafeArea()
     }
 }
 

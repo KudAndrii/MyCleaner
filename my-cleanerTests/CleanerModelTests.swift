@@ -26,6 +26,10 @@ struct CleanerModelInitialStateTests {
         #expect(m.appSize == 0)
         #expect(m.items.isEmpty)
         #expect(m.orphanGroups.isEmpty)
+        #expect(m.largeFiles.isEmpty)
+        #expect(m.largeFileCategoryFilter == nil)
+        #expect(m.largeFileMinimumBytes == LargeFileScanner.defaultMinimumBytes)
+        #expect(m.cacheGroups.isEmpty)
         #expect(m.errorMessage == nil)
         #expect(m.isHovering == false)
     }
@@ -42,6 +46,14 @@ struct CleanerModelInitialStateTests {
         #expect(m.orphanSelectedSize == 0)
         #expect(m.orphanTotalSize == 0)
         #expect(m.allOrphansSelected == false)
+        #expect(m.largeFileSelectedCount == 0)
+        #expect(m.largeFileSelectedSize == 0)
+        #expect(m.largeFileVisibleSize == 0)
+        #expect(m.allLargeFilesSelected == false)
+        #expect(m.cacheSelectedCount == 0)
+        #expect(m.cacheSelectedSize == 0)
+        #expect(m.cacheTotalSize == 0)
+        #expect(m.allCachesSelected == false)
     }
 }
 
@@ -229,6 +241,266 @@ struct CleanerModelOrphanTests {
     }
 }
 
+@Suite("CleanerModel — large-file selection")
+@MainActor
+struct CleanerModelLargeFileTests {
+
+    private func entry(
+        _ size: Int64,
+        category: LargeFileCategory = .other,
+        selected: Bool = false,
+        id: String = UUID().uuidString
+    ) -> LargeFileEntry {
+        LargeFileEntry(
+            url: URL(fileURLWithPath: "/tmp/\(id)"),
+            displayName: id,
+            sizeBytes: size,
+            isDirectory: false,
+            category: category,
+            modificationDate: nil,
+            isSelected: selected
+        )
+    }
+
+    @Test("visibleLargeFiles passes through everything by default")
+    func visibleByDefault() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video),
+            entry(150_000_000, category: .archive),
+        ]
+        #expect(m.visibleLargeFiles.count == 2)
+    }
+
+    @Test("Minimum-size filter narrows the visible list without touching the underlying scan")
+    func minimumSizeFilter() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(80_000_000, category: .other),
+            entry(200_000_000, category: .other),
+        ]
+        m.largeFileMinimumBytes = 100_000_000
+        #expect(m.visibleLargeFiles.count == 1)
+        // Underlying list survives — flipping the slider back returns everything.
+        m.largeFileMinimumBytes = 1
+        #expect(m.visibleLargeFiles.count == 2)
+    }
+
+    @Test("Category chip filter narrows to a single bucket")
+    func categoryFilter() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video),
+            entry(200_000_000, category: .archive),
+            entry(200_000_000, category: .video),
+        ]
+        m.largeFileCategoryFilter = .video
+        #expect(m.visibleLargeFiles.count == 2)
+        #expect(m.visibleLargeFiles.allSatisfy { $0.category == .video })
+    }
+
+    @Test("largeFileSelectedCount counts only selected visible entries")
+    func selectedCount() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video, selected: true),
+            entry(200_000_000, category: .video, selected: false),
+            entry(50_000_000, category: .archive, selected: true),
+        ]
+        m.largeFileMinimumBytes = 100_000_000
+        // Only the two video entries are visible; one of them is selected.
+        #expect(m.largeFileSelectedCount == 1)
+    }
+
+    @Test("toggleAllLargeFiles only touches visible entries")
+    func toggleAllVisibleOnly() {
+        let m = CleanerModel()
+        m.largeFiles = [
+            entry(200_000_000, category: .video, selected: false),
+            entry(200_000_000, category: .video, selected: false),
+            entry(50_000_000, category: .archive, selected: false),
+        ]
+        m.largeFileMinimumBytes = 100_000_000
+        m.toggleAllLargeFiles()
+        // Both visible (video) entries are now selected, the hidden
+        // archive entry is untouched.
+        let videos = m.largeFiles.filter { $0.category == .video }
+        #expect(videos.allSatisfy { $0.isSelected })
+        let archives = m.largeFiles.filter { $0.category == .archive }
+        #expect(archives.allSatisfy { !$0.isSelected })
+    }
+
+    @Test("toggleLargeFile flips a single entry's selection")
+    func toggleSingle() {
+        let m = CleanerModel()
+        let target = entry(200_000_000, category: .video, selected: false)
+        m.largeFiles = [target]
+        m.toggleLargeFile(id: target.id)
+        #expect(m.largeFiles.first?.isSelected == true)
+        m.toggleLargeFile(id: target.id)
+        #expect(m.largeFiles.first?.isSelected == false)
+    }
+
+    @Test("toggleLargeFile is a no-op for unknown ids")
+    func toggleUnknown() {
+        let m = CleanerModel()
+        let target = entry(200_000_000, category: .video, selected: false)
+        m.largeFiles = [target]
+        m.toggleLargeFile(id: URL(fileURLWithPath: "/tmp/not-real"))
+        #expect(m.largeFiles.first?.isSelected == false)
+    }
+
+    @Test("confirmLargeFileCleanup with no selection stays in largeFileResults")
+    func confirmNoop() async {
+        let m = CleanerModel()
+        m.largeFiles = [entry(200_000_000, category: .video, selected: false)]
+        m.stage = .largeFileResults
+        await m.confirmLargeFileCleanup()
+        #expect(m.stage == .largeFileResults)
+    }
+
+    @Test("reset clears the large-file state and filters")
+    func resetClearsLargeFiles() {
+        let m = CleanerModel()
+        m.largeFiles = [entry(200_000_000, category: .video, selected: true)]
+        m.largeFileMinimumBytes = 500_000_000
+        m.largeFileCategoryFilter = .video
+        m.stage = .largeFileResults
+
+        m.reset()
+
+        #expect(m.largeFiles.isEmpty)
+        #expect(m.largeFileMinimumBytes == LargeFileScanner.defaultMinimumBytes)
+        #expect(m.largeFileCategoryFilter == nil)
+        #expect(m.stage == .idle)
+    }
+
+    @Test("allLargeFilesSelected requires the visible list to be non-empty")
+    func allSelectedRespectsVisibility() {
+        let m = CleanerModel()
+        #expect(m.allLargeFilesSelected == false)
+        m.largeFiles = [
+            entry(200_000_000, category: .video, selected: true),
+            entry(200_000_000, category: .video, selected: true),
+        ]
+        #expect(m.allLargeFilesSelected == true)
+        m.largeFileCategoryFilter = .archive  // hides everything
+        #expect(m.allLargeFilesSelected == false)
+    }
+}
+
+@Suite("CleanerModel — cache selection")
+@MainActor
+struct CleanerModelCacheTests {
+
+    private func entry(_ size: Int64) -> CacheEntry {
+        CacheEntry(
+            url: URL(fileURLWithPath: "/tmp/\(UUID().uuidString)"),
+            sizeBytes: size,
+            isDirectory: true
+        )
+    }
+
+    private func group(_ id: String, sizes: [Int64], selected: Bool) -> CacheGroup {
+        CacheGroup(
+            id: id,
+            bundleID: id,
+            displayName: id,
+            appURL: nil,
+            kind: .installedApp,
+            entries: sizes.map(entry),
+            isSafeToDelete: true,
+            isSelected: selected
+        )
+    }
+
+    @Test("cacheSelectedCount sums entries in selected groups only")
+    func selectedCount() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10, 20], selected: true),
+            group("com.b.bar", sizes: [10, 20, 30], selected: false),
+            group("com.c.baz", sizes: [50], selected: true),
+        ]
+        #expect(m.cacheSelectedCount == 3)
+    }
+
+    @Test("cacheSelectedSize sums sizes in selected groups only")
+    func selectedSize() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10, 20], selected: true),     // 30
+            group("com.b.bar", sizes: [100, 100], selected: false),
+            group("com.c.baz", sizes: [50], selected: true),         // 50
+        ]
+        #expect(m.cacheSelectedSize == 80)
+    }
+
+    @Test("cacheTotalSize sums every group regardless of selection")
+    func totalSize() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10, 20], selected: true),
+            group("com.b.bar", sizes: [100], selected: false),
+        ]
+        #expect(m.cacheTotalSize == 130)
+    }
+
+    @Test("toggleCacheGroup flips a single group's selection")
+    func toggleCacheGroup() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("com.a.foo", sizes: [10], selected: false),
+            group("com.b.bar", sizes: [20], selected: true),
+        ]
+        m.toggleCacheGroup(id: "com.a.foo")
+        #expect(m.cacheGroups[0].isSelected == true)
+        #expect(m.cacheGroups[1].isSelected == true)
+        m.toggleCacheGroup(id: "com.b.bar")
+        #expect(m.cacheGroups[1].isSelected == false)
+    }
+
+    @Test("toggleCacheGroup is a no-op for unknown id")
+    func toggleUnknown() {
+        let m = CleanerModel()
+        m.cacheGroups = [group("com.a.foo", sizes: [10], selected: false)]
+        m.toggleCacheGroup(id: "not.a.real.id")
+        #expect(m.cacheGroups[0].isSelected == false)
+    }
+
+    @Test("toggleAllCaches selects all when at least one is unselected")
+    func toggleAllSelects() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("a.b.c", sizes: [1], selected: true),
+            group("a.b.d", sizes: [1], selected: false),
+        ]
+        m.toggleAllCaches()
+        #expect(m.cacheGroups.allSatisfy { $0.isSelected })
+    }
+
+    @Test("toggleAllCaches deselects all when all are selected")
+    func toggleAllDeselects() {
+        let m = CleanerModel()
+        m.cacheGroups = [
+            group("a.b.c", sizes: [1], selected: true),
+            group("a.b.d", sizes: [1], selected: true),
+        ]
+        m.toggleAllCaches()
+        #expect(m.cacheGroups.allSatisfy { !$0.isSelected })
+    }
+
+    @Test("confirmCacheCleanup with no selection stays in cacheResults")
+    func confirmCacheCleanupNoop() async {
+        let m = CleanerModel()
+        m.cacheGroups = [group("com.a.b", sizes: [1], selected: false)]
+        m.stage = .cacheResults
+        await m.confirmCacheCleanup()
+        // Early return: stage shouldn't move to .cleaning or .done.
+        #expect(m.stage == .cacheResults)
+    }
+}
+
 @Suite("CleanerModel — reset & error paths")
 @MainActor
 struct CleanerModelResetTests {
@@ -245,6 +517,16 @@ struct CleanerModelResetTests {
             isDirectory: false
         )]
         m.orphanGroups = [OrphanGroup(bundleID: "com.a.b", items: [], isSelected: true)]
+        m.cacheGroups = [CacheGroup(
+            id: "com.a.b",
+            bundleID: "com.a.b",
+            displayName: "x",
+            appURL: nil,
+            kind: .installedApp,
+            entries: [],
+            isSafeToDelete: true,
+            isSelected: true
+        )]
         m.errorMessage = "boom"
         m.isHovering = true
         m.stage = .results
@@ -254,6 +536,7 @@ struct CleanerModelResetTests {
         #expect(m.appSize == 0)
         #expect(m.items.isEmpty)
         #expect(m.orphanGroups.isEmpty)
+        #expect(m.cacheGroups.isEmpty)
         #expect(m.errorMessage == nil)
         #expect(m.isHovering == false)
         #expect(m.stage == .idle)
