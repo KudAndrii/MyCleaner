@@ -141,13 +141,11 @@ struct DuplicateResultsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             if model.duplicateGroups.isEmpty {
                 emptyState
             } else {
                 list
             }
-            Divider()
             footer
         }
         .alert("Move \(model.duplicateSelectedCount) duplicate \(model.duplicateSelectedCount == 1 ? "copy" : "copies") to the Trash?",
@@ -162,13 +160,18 @@ struct DuplicateResultsView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "doc.on.doc.fill")
-                .font(.system(size: 36))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Duplicate files").font(.title2.weight(.semibold))
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.purple.opacity(0.22))
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.title)
+                    .foregroundStyle(.purple)
+            }
+            .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Duplicate files").font(.title.weight(.semibold))
                 if !model.duplicateGroups.isEmpty {
                     Text("\(model.duplicateTotalCopies) copies across \(model.duplicateGroups.count) \(model.duplicateGroups.count == 1 ? "group" : "groups") · up to \(byteCountString(model.duplicateMaximumRecoverableBytes)) recoverable")
                         .font(.caption)
@@ -182,7 +185,8 @@ struct DuplicateResultsView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 20)
+        .background(.bar)
     }
 
     private var emptyState: some View {
@@ -249,7 +253,7 @@ struct DuplicateResultsView: View {
             .padding(.top, 4)
         }
         .padding(14)
-        .background(.background.secondary, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
 
     private func copyRow(group: DuplicateGroup, copy: DuplicateCopy) -> some View {
@@ -333,7 +337,9 @@ struct DuplicateResultsView: View {
             .controlSize(.large)
             .disabled(model.duplicateSelectedCount == 0)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.bar)
     }
 
     private func byteCountString(_ b: Int64) -> String {

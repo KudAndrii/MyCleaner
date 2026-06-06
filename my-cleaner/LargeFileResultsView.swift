@@ -130,7 +130,6 @@ struct LargeFileResultsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             filterBar
             Divider()
             if model.largeFiles.isEmpty {
@@ -140,7 +139,6 @@ struct LargeFileResultsView: View {
             } else {
                 list
             }
-            Divider()
             footer
         }
         .alert("Move \(model.largeFileSelectedCount) \(model.largeFileSelectedCount == 1 ? "item" : "items") to the Trash?",
@@ -157,13 +155,18 @@ struct LargeFileResultsView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "scalemass.fill")
-                .font(.system(size: 36))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Large files").font(.title2.weight(.semibold))
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.orange.opacity(0.22))
+                Image(systemName: "scalemass.fill")
+                    .font(.title)
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Large files").font(.title.weight(.semibold))
                 if !model.largeFiles.isEmpty {
                     Text("\(sizeFilteredFiles.count) above \(byteCountString(model.largeFileMinimumBytes)) · top consumers in your home folder")
                         .font(.caption)
@@ -177,7 +180,8 @@ struct LargeFileResultsView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 20)
+        .background(.bar)
     }
 
     // MARK: Filter bar
@@ -349,7 +353,7 @@ struct LargeFileResultsView: View {
                     }
                 }
             }
-            .background(.background.secondary, in: .rect(cornerRadius: 14))
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
             .padding(.horizontal, 20)
             .padding(.vertical, 18)
         }
@@ -459,7 +463,9 @@ struct LargeFileResultsView: View {
             .controlSize(.large)
             .disabled(model.largeFileSelectedCount == 0)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.bar)
     }
 
     // MARK: Formatting helpers

@@ -37,13 +37,11 @@ struct OrphanResultsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             if model.orphanGroups.isEmpty {
                 emptyState
             } else {
                 list
             }
-            Divider()
             footer
         }
         .alert("Move \(model.orphanSelectedCount) \(model.orphanSelectedCount == 1 ? "item" : "items") to the Trash?",
@@ -73,13 +71,18 @@ struct OrphanResultsView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "tray.2.fill")
-                .font(.system(size: 36))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Orphaned files").font(.title2.weight(.semibold))
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.indigo.opacity(0.22))
+                Image(systemName: "tray.2.fill")
+                    .font(.title)
+                    .foregroundStyle(.indigo)
+            }
+            .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("App leftovers").font(.title.weight(.semibold))
                 if !model.orphanGroups.isEmpty {
                     Text("\(model.orphanGroups.count) bundle IDs · \(byteCountString(model.orphanTotalSize)) recoverable")
                         .font(.caption)
@@ -93,7 +96,8 @@ struct OrphanResultsView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 20)
+        .background(.bar)
     }
 
     private var emptyState: some View {
@@ -179,7 +183,7 @@ struct OrphanResultsView: View {
             .padding(.top, 2)
         }
         .padding(14)
-        .background(.background.secondary, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
 
     private func itemRow(_ item: RelatedItem) -> some View {
@@ -256,7 +260,9 @@ struct OrphanResultsView: View {
             .controlSize(.large)
             .disabled(model.orphanSelectedCount == 0)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.bar)
     }
 
     private var selectedGroupCount: Int {

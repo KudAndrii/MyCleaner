@@ -130,13 +130,11 @@ struct CacheResultsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             if model.cacheGroups.isEmpty {
                 emptyState
             } else {
                 list
             }
-            Divider()
             footer
         }
         .alert("Move \(model.cacheSelectedCount) cache \(model.cacheSelectedCount == 1 ? "entry" : "entries") to the Trash?",
@@ -169,13 +167,18 @@ struct CacheResultsView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "externaldrive.fill")
-                .font(.system(size: 36))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Oversized caches").font(.title2.weight(.semibold))
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.teal.opacity(0.22))
+                Image(systemName: "externaldrive.fill")
+                    .font(.title)
+                    .foregroundStyle(.teal)
+            }
+            .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Oversized caches").font(.title.weight(.semibold))
                 if !model.cacheGroups.isEmpty {
                     Text("\(model.cacheGroups.count) \(model.cacheGroups.count == 1 ? "group" : "groups") · \(byteCountString(model.cacheTotalSize)) recoverable")
                         .font(.caption)
@@ -189,7 +192,8 @@ struct CacheResultsView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.vertical, 20)
+        .background(.bar)
     }
 
     private var emptyState: some View {
@@ -314,7 +318,7 @@ struct CacheResultsView: View {
             }
         }
         .padding(14)
-        .background(.background.secondary, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
 
     @ViewBuilder
@@ -473,7 +477,9 @@ struct CacheResultsView: View {
             .controlSize(.large)
             .disabled(model.cacheSelectedCount == 0)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.bar)
     }
 
     private var selectedGroupCount: Int {
