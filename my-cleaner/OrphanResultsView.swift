@@ -118,6 +118,15 @@ struct OrphanResultsView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
+            Button {
+                model.reset()
+            } label: {
+                Text("OK").frame(minWidth: 100)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
@@ -268,6 +277,7 @@ struct OrphanResultsView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+        .opacity(model.orphanGroups.isEmpty ? 0 : 1)
         .background(.bar)
     }
 

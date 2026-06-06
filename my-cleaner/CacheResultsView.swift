@@ -214,7 +214,16 @@ struct CacheResultsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 400)
+                .frame(maxWidth: 380)
+            Button {
+                model.reset()
+            } label: {
+                Text("OK").frame(minWidth: 100)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
@@ -486,6 +495,7 @@ struct CacheResultsView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+        .opacity(model.cacheGroups.isEmpty ? 0 : 1)
         .background(.bar)
     }
 
