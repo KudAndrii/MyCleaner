@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="./repo-assets/my-cleaner_dropzone.png" alt="MyCleaner dropzone" width="760"/>
+  <img src="./repo-assets/my-cleaner_home-storage.png" alt="MyCleaner home screen" width="760"/>
 </p>
 
 ## Why this exists
@@ -76,26 +76,78 @@ After items are sent to the Trash, MyCleaner also:
 - Runs `tccutil reset All <bundleID>` so the row in
   **System Settings → Privacy & Security** disappears.
 
-## Orphaned files cleanup
+## Other scanners
 
-The drop zone has a second button — **Find leftovers from removed apps** —
-that scans Library directories for support files whose owning app is no
-longer installed. Attribution is by bundle ID only (no name-based
-heuristics) and the scan is backstopped by a Launch Services lookup so
-apps installed outside `/Applications` (Setapp, `/opt`, mounted DMGs)
-aren't mistaken for orphans.
+Alongside the per-app drop flow, the home screen surfaces four
+standalone scanners as a tools grid. Each one persists its last
+result so the home insight card shows what's reclaimable across the
+whole Mac and stays honest after items are trashed.
+
+- **App leftovers** — scans Library directories for support files
+  whose owning app is no longer installed. Attribution is by bundle
+  ID only (no name-based heuristics) and the scan is backstopped by
+  a Launch Services lookup so apps installed outside `/Applications`
+  (Setapp, `/opt`, mounted DMGs) aren't mistaken for orphans.
+- **Large files** — Spotlight pass over `~/` plus a targeted walk
+  through nests like `~/Library/Developer/CoreSimulator`,
+  `~/Library/Containers/com.docker.docker`, virtual-machine folders,
+  and `~/Downloads`, with a configurable size floor.
+- **Oversized caches** — measures every group under
+  `~/Library/Caches` and `/Library/Caches` plus well-known toolchain
+  roots (Xcode DerivedData, iOS Simulator caches, npm / pnpm /
+  Gradle / Cargo / Homebrew). Routine app caches are surfaced as
+  safe-to-delete; anything we can't attribute is flagged for review.
+- **Duplicate files** — byte-identical files across `~/Downloads`,
+  `~/Documents`, `~/Desktop`, `~/Pictures`, `~/Movies`, and
+  `~/Music`. Compared by SHA-256, not by filename. Each group keeps
+  at least one copy.
 
 ## Screenshots
 
-| Per-app cleanup | Orphaned files |
-| --- | --- |
-| ![App cleanup](./repo-assets/my-cleaner_app-cleanup.png) | ![Orphaned cleanup](./repo-assets/my-cleaner_orphaned-cleanup.png) |
-| The results view after dropping an app — every leftover bucketed and toggleable, with the app size and Trash total in the footer. | The orphan flow surfacing support files whose owning app is no longer installed, grouped by bundle ID. |
+### Home
 
-| Login items (opt-in) | Permissions |
+| First launch | After running scans |
 | --- | --- |
-| ![Login items](./repo-assets/my-cleaner_feature_login-items.png) | ![Permissions](./repo-assets/my-cleaner_permissions.png) |
-| `SMAppService` background helpers attributable to the dropped app, behind an admin-prompt toggle so credentials are only requested when you ask. | Full Disk Access onboarding — without it the scanner can't read large parts of `~/Library` and `/Library`. |
+| ![Storage overview](./repo-assets/my-cleaner_home-storage.png) | ![Reclaimable summary](./repo-assets/my-cleaner_home-reclaimable.png) |
+| Before any scan, the insight card mirrors macOS's Storage panel — used / free on the boot volume with a CTA to run a tool. | Once a tool has run, the card flips to a per-category breakdown with a stacked bar and the four fixed rows — each row shows live size, "Nothing found", "Run a scan", or a stale-date label. |
+
+### Per-app cleanup
+
+<p align="center">
+  <img src="./repo-assets/my-cleaner_app-cleanup.png" alt="Per-app cleanup" width="640"/>
+</p>
+
+The results screen after dropping an app — every leftover bucketed
+by category and toggleable, an opt-in Login Items banner for
+`SMAppService` background helpers, and the running selection / Trash
+total pinned to the action bar.
+
+### Standalone scanners
+
+| App leftovers | Oversized caches |
+| --- | --- |
+| ![App leftovers](./repo-assets/my-cleaner_orphan-results.png) | ![Cache results](./repo-assets/my-cleaner_cache-results.png) |
+| Bundle-ID-keyed groups for support files left behind by removed apps. | Cache groups colour-coded by trust — app caches surfaced safe; vendor folders flagged for review. |
+
+| Large files — pre-scan | Large files — results |
+| --- | --- |
+| ![Large files scope](./repo-assets/my-cleaner_large-files-scope.png) | ![Large files results](./repo-assets/my-cleaner_large-files-results.png) |
+| Pick a size floor and which deep nests to walk after the Spotlight pass. | Top consumers ranked, with category chips and a slider to widen or narrow the floor without re-scanning. |
+
+| Duplicate files — pre-scan | Duplicate files — empty state |
+| --- | --- |
+| ![Duplicates scope](./repo-assets/my-cleaner_duplicates-scope.png) | ![Duplicates empty](./repo-assets/my-cleaner_duplicates-empty.png) |
+| Choose folders to compare and a minimum file size so tiny files don't blow up memory. | When a scan returns nothing, the disabled trash bar steps out of the way and a prominent OK button returns you home. |
+
+### Setup
+
+<p align="center">
+  <img src="./repo-assets/my-cleaner_permissions.png" alt="Permissions" width="520"/>
+</p>
+
+Full Disk Access and App Management onboarding — without both, the
+scanner can't read large parts of `~/Library` and `/Library` or move
+items out of `/Applications`.
 
 ## Install
 
