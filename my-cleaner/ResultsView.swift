@@ -157,18 +157,36 @@ struct ResultsView: View {
     }
 
     private var loginItemsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "person.crop.circle.badge.clock.fill")
-                    .foregroundStyle(.tint)
-                Text("Login Items (background)")
-                    .font(.subheadline.weight(.semibold))
-                if model.loginItemsEnabled, !model.loginItems.isEmpty {
-                    Text("· \(model.loginItems.count)")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(.blue.opacity(0.22))
+                    Image(systemName: "person.crop.circle.badge.clock.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.blue)
+                }
+                .frame(width: 38, height: 38)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Login Items")
+                            .font(.callout.weight(.semibold))
+                        Text("· background")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if model.loginItemsEnabled, !model.loginItems.isEmpty {
+                            Text("· \(model.loginItems.count)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(loginItemsExplainer)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
+                Spacer(minLength: 12)
                 Toggle("", isOn: loginItemsBinding)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -177,12 +195,8 @@ struct ResultsView: View {
                           ? "Hide registered login items."
                           : "Check registered login items. macOS will prompt for an admin password (once per app launch).")
             }
-            .padding(.horizontal, 8)
-
-            Text(loginItemsExplainer)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
+            .padding(14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
 
             if model.loginItemsEnabled {
                 if model.loginItems.isEmpty {

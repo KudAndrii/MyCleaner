@@ -27,12 +27,12 @@ struct HomeView: View {
                 }
                 heroRow
                 toolsSection
+                footerCard
             }
             .frame(maxWidth: 1100)
             .frame(maxWidth: .infinity)
             .padding(24)
         }
-        .safeAreaInset(edge: .bottom) { footerBar }
         .onAppear {
             permissions.refresh()
             model.refreshHomeStats()
@@ -351,10 +351,28 @@ struct HomeView: View {
 
     // MARK: - Footer
 
-    private var footerBar: some View {
+    /// Slim row that closes out the scroll content. Two independent
+    /// glass tiles so each half reads as its own affordance — the
+    /// left holds the login-items toggle, the right is one large
+    /// pressable surface that opens the System Checks sheet.
+    private var footerCard: some View {
         HStack(spacing: 12) {
-            Image(systemName: "person.crop.circle.badge.clock")
-                .foregroundStyle(.tint)
+            loginItemsCell
+            systemChecksCell
+        }
+    }
+
+    private var loginItemsCell: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.blue.opacity(0.22))
+                Image(systemName: "person.crop.circle.badge.clock")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+            }
+            .frame(width: 28, height: 28)
+
             VStack(alignment: .leading, spacing: 1) {
                 Text("Background login items")
                     .font(.caption.weight(.medium))
@@ -362,6 +380,7 @@ struct HomeView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            Spacer(minLength: 10)
             Toggle("", isOn: loginItemsBinding)
                 .labelsHidden()
                 .toggleStyle(.switch)
@@ -369,20 +388,48 @@ struct HomeView: View {
                 .help(model.loginItemsEnabled
                       ? "Stop including registered login items in scan results."
                       : "Include registered login items in scan results. macOS will prompt for an admin password (once per app launch).")
-            Spacer(minLength: 8)
-            Button {
-                onReviewPermissions()
-            } label: {
-                Label("System checks…", systemImage: "stethoscope")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .help("Inspect permissions and scanner availability.")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.bar)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+    }
+
+    private var systemChecksCell: some View {
+        Button {
+            onReviewPermissions()
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.green.opacity(0.22))
+                    Image(systemName: "stethoscope")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green)
+                }
+                .frame(width: 28, height: 28)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("System checks")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text("Permissions & scanner availability")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 14))
+        .help("Inspect permissions and scanner availability.")
     }
 
     private var loginItemsStateText: String {
