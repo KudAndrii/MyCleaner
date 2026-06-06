@@ -67,3 +67,4 @@ Uses **Swift Testing** (`import Testing`, `@Suite`, `@Test`, `#expect`), not XCT
 - README.md asks contributors to keep new matcher rules accompanied by a comment explaining the pattern it catches **and** the false positive it avoids. `AppScanner.wordBoundaryPrefix` is the precedent.
 - Don't re-enable App Sandbox under any circumstances.
 - The user typically wants you to verify changes with a build + test pass before reporting done.
+- **No AI attribution in git artefacts.** Commit messages, PR titles, and PR descriptions must not include any reference to Claude, Anthropic, or the assistant — no `Co-Authored-By: Claude …` trailer, no `🤖 Generated with Claude Code` footer, no other variant. Write the message as if the user authored it themselves.
