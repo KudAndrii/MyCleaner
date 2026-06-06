@@ -413,9 +413,15 @@ struct HomeView: View {
 
     private var sandboxWarning: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(.orange)
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.orange.opacity(0.22))
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 40, height: 40)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text("App Sandbox is enabled — scans will return nothing.")
                     .font(.callout.weight(.semibold))
@@ -427,18 +433,20 @@ struct HomeView: View {
             Spacer(minLength: 0)
         }
         .padding(14)
-        .background(.orange.opacity(0.12), in: .rect(cornerRadius: 14))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
-        }
+        .glassEffect(.regular.tint(.orange.opacity(0.18)), in: .rect(cornerRadius: 14))
     }
 
     private var permissionsBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "lock.shield")
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(.orange)
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.orange.opacity(0.22))
+                Image(systemName: "lock.shield")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 36, height: 36)
+
             Text(bannerText)
                 .font(.callout)
             Spacer(minLength: 8)
@@ -448,11 +456,7 @@ struct HomeView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.orange.opacity(0.10), in: .rect(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.30), lineWidth: 1)
-        }
+        .glassEffect(.regular.tint(.orange.opacity(0.18)), in: .rect(cornerRadius: 12))
     }
 
     private var bannerText: String {
