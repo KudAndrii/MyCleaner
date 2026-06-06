@@ -88,6 +88,19 @@ nonisolated struct HomeStat: Equatable, Sendable {
     let count: Int
 }
 
+/// Per-tool state of the insight card's four fixed rows. Drives the
+/// state-aware copy ("Run a scan" vs "9.2 GB · 14 places" vs
+/// "Nothing found" vs "7 days ago — re-scan?").
+nonisolated enum ToolRowState: Equatable, Sendable {
+    case notScanned
+    case empty(scannedAt: Date)
+    case data(bytes: Int64, count: Int, scannedAt: Date)
+    case stale(bytes: Int64, count: Int, scannedAt: Date)
+}
+
+/// Cutoff between a "fresh" and "stale" cached scan.
+nonisolated let scanStaleThreshold: TimeInterval = 7 * 24 * 60 * 60
+
 extension ScanCache {
     /// One slice of the home-screen "Reclaimable space" stacked bar.
     /// Lives on the model side so the view layer doesn't have to walk
@@ -121,6 +134,56 @@ extension ScanCache {
     /// Sum of every surviving tool's recoverable bytes.
     var reclaimableTotal: Int64 {
         reclaimableSegments.map(\.bytes).reduce(0, +)
+    }
+
+    /// `true` once any tool has been scanned, regardless of result.
+    /// Flips the home insight card from the storage-overview state
+    /// to the per-tool breakdown.
+    var hasAnyScans: Bool {
+        orphans != nil || largeFiles != nil || oversizedCaches != nil || duplicates != nil
+    }
+
+    // MARK: - Per-tool row state
+
+    func orphanRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = orphans else { return .notScanned }
+        let bytes = snapshot.groups.flatMap(\.items).map(\.sizeBytes).reduce(0, +)
+        let count = snapshot.groups.count
+        return rowState(count: count, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    func largeFileRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = largeFiles else { return .notScanned }
+        let bytes = snapshot.items.map(\.sizeBytes).reduce(0, +)
+        let count = snapshot.items.count
+        return rowState(count: count, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    func oversizedCacheRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = oversizedCaches else { return .notScanned }
+        let bytes = snapshot.groups.flatMap(\.entries).map(\.sizeBytes).reduce(0, +)
+        let count = snapshot.groups.count
+        return rowState(count: count, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    func duplicateRowState(now: Date = Date()) -> ToolRowState {
+        guard let snapshot = duplicates else { return .notScanned }
+        var bytes: Int64 = 0
+        var dupes = 0
+        for group in snapshot.groups where group.paths.count > 1 {
+            let extras = group.paths.count - 1
+            bytes += group.sizePerCopy * Int64(extras)
+            dupes += extras
+        }
+        return rowState(count: dupes, bytes: bytes, scannedAt: snapshot.scannedAt, now: now)
+    }
+
+    private func rowState(count: Int, bytes: Int64, scannedAt: Date, now: Date) -> ToolRowState {
+        if count == 0 { return .empty(scannedAt: scannedAt) }
+        if now.timeIntervalSince(scannedAt) > scanStaleThreshold {
+            return .stale(bytes: bytes, count: count, scannedAt: scannedAt)
+        }
+        return .data(bytes: bytes, count: count, scannedAt: scannedAt)
     }
 
     /// `nil` when the orphan scan has never been run (or every group

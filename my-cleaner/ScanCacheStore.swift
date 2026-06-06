@@ -68,6 +68,11 @@ nonisolated enum ScanCacheStore {
     /// collapses any group that empties out. Returns the pruned cache;
     /// the result equals the input when nothing changed (so callers
     /// can skip a write).
+    ///
+    /// Snapshots whose groups all end up empty are **kept** (just with
+    /// empty contents) so the home insight card can still distinguish
+    /// "scanned, nothing left" from "never scanned" — both states are
+    /// surfaced to the user with different copy.
     nonisolated static func validate(
         _ cache: ScanCache,
         exists: Exists = defaultExists
@@ -80,12 +85,12 @@ nonisolated enum ScanCacheStore {
                 g.items.removeAll { !exists($0.path) }
                 return g.items.isEmpty ? nil : g
             }
-            pruned.orphans = snapshot.groups.isEmpty ? nil : snapshot
+            pruned.orphans = snapshot
         }
 
         if var snapshot = pruned.largeFiles {
             snapshot.items.removeAll { !exists($0.path) }
-            pruned.largeFiles = snapshot.items.isEmpty ? nil : snapshot
+            pruned.largeFiles = snapshot
         }
 
         if var snapshot = pruned.oversizedCaches {
@@ -94,7 +99,7 @@ nonisolated enum ScanCacheStore {
                 g.entries.removeAll { !exists($0.path) }
                 return g.entries.isEmpty ? nil : g
             }
-            pruned.oversizedCaches = snapshot.groups.isEmpty ? nil : snapshot
+            pruned.oversizedCaches = snapshot
         }
 
         if var snapshot = pruned.duplicates {
@@ -105,7 +110,7 @@ nonisolated enum ScanCacheStore {
                 // duplicate anymore — drop it.
                 return g.paths.count >= 2 ? g : nil
             }
-            pruned.duplicates = snapshot.groups.isEmpty ? nil : snapshot
+            pruned.duplicates = snapshot
         }
 
         return pruned

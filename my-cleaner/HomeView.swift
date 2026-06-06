@@ -127,27 +127,41 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Reclaimable Space insight
+    // MARK: - Insight card
 
-    /// Companion to the drop zone. Aggregates whatever survives in the
-    /// scan cache into a single "reclaimable" headline + stacked bar +
-    /// legend. Stays empty-stated until the user has actually run a
-    /// scan — we never claim a number we didn't measure.
+    /// Companion to the drop zone. Two states:
+    /// - Until any tool has been run, mirrors macOS Settings →
+    ///   Storage with the volume's used/free overview.
+    /// - Once at least one scan has been recorded, flips to the
+    ///   reclaimable-space headline + stacked bar plus four fixed
+    ///   per-tool rows so every tool is always represented.
+    /// The top-right "Clear" affordance wipes the persisted cache
+    /// and reverts to the storage overview state.
     private var insightCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("RECLAIMABLE SPACE")
+            HStack(alignment: .firstTextBaseline) {
+                Text(model.scanCache.hasAnyScans ? "RECLAIMABLE SPACE" : "STORAGE")
                     .font(.caption.weight(.semibold))
                     .tracking(1.2)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
+                if model.scanCache.hasAnyScans {
+                    Button {
+                        model.clearScanCache()
+                    } label: {
+                        Label("Clear", systemImage: "arrow.counterclockwise")
+                            .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Clear cached scan results and show the disk overview instead.")
+                }
             }
 
-            let segments = model.scanCache.reclaimableSegments
-            if segments.isEmpty {
-                insightEmptyState
+            if model.scanCache.hasAnyScans {
+                insightPopulated(segments: model.scanCache.reclaimableSegments)
             } else {
-                insightPopulated(segments: segments)
+                insightStorageOverview
             }
         }
         .padding(24)
@@ -155,16 +169,53 @@ struct HomeView: View {
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
     }
 
-    private var insightEmptyState: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Nothing measured yet")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.primary)
-            Text("Run any tool below and we'll start tracking how much space you can win back.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+    /// Mode A — volume used/free overview, shown until the user has
+    /// run at least one scan. Numbers come straight from
+    /// `URLResourceValues`; we never invent breakdowns we can't
+    /// actually measure.
+    private var insightStorageOverview: some View {
+        let stats = VolumeStats.boot()
+        return VStack(alignment: .leading, spacing: 14) {
+            if let stats {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(ByteCountFormatter.string(fromByteCount: stats.usedBytes, countStyle: .file))
+                        .font(.system(size: 36, weight: .bold))
+                    Text("used")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("of \(ByteCountFormatter.string(fromByteCount: stats.totalBytes, countStyle: .file)) on this Mac · \(ByteCountFormatter.string(fromByteCount: stats.freeBytes, countStyle: .file)) free")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                volumeBar(used: stats.usedBytes, total: stats.totalBytes)
+            } else {
+                Text("Couldn't read drive stats")
+                    .font(.callout.weight(.medium))
+            }
+
+            Text("Run any tool below to find recoverable space — totals appear here once a scan completes.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func volumeBar(used: Int64, total: Int64) -> some View {
+        GeometryReader { geo in
+            HStack(spacing: 2) {
+                let fraction = total > 0 ? CGFloat(used) / CGFloat(total) : 0
+                Rectangle()
+                    .fill(.tint)
+                    .frame(width: max(4, geo.size.width * fraction))
+                Rectangle()
+                    .fill(.secondary.opacity(0.25))
+            }
+        }
+        .frame(height: 8)
+        .clipShape(.capsule)
     }
 
     @ViewBuilder
@@ -181,12 +232,117 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("across \(segments.count) \(segments.count == 1 ? "category" : "categories") on this Mac")
+            Text(populatedSubtitle(segments: segments))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            stackedBar(segments: segments, total: total)
-            legend(segments: segments)
+            if total > 0 {
+                stackedBar(segments: segments, total: total)
+            }
+            toolRowsList
+        }
+    }
+
+    private func populatedSubtitle(segments: [ScanCache.ReclaimableSegment]) -> String {
+        let withData = segments.filter { $0.bytes > 0 }.count
+        if withData == 0 {
+            return "Nothing left to recover right now."
+        }
+        return "across \(withData) \(withData == 1 ? "category" : "categories") on this Mac"
+    }
+
+    /// Always-four-rows breakdown shown beneath the stacked bar.
+    /// Each row carries its own state-aware copy so the user can see
+    /// at a glance which tools have been run, what they found, and
+    /// what's gone stale.
+    private var toolRowsList: some View {
+        VStack(spacing: 8) {
+            toolRow(
+                label: "App leftovers",
+                tint: .indigo,
+                state: model.scanCache.orphanRowState(),
+                singular: "bundle",
+                plural: "bundles"
+            )
+            toolRow(
+                label: "Large files",
+                tint: .orange,
+                state: model.scanCache.largeFileRowState(),
+                singular: "file",
+                plural: "files"
+            )
+            toolRow(
+                label: "Oversized caches",
+                tint: .teal,
+                state: model.scanCache.oversizedCacheRowState(),
+                singular: "place",
+                plural: "places"
+            )
+            toolRow(
+                label: "Duplicate files",
+                tint: .purple,
+                state: model.scanCache.duplicateRowState(),
+                singular: "dupe",
+                plural: "dupes"
+            )
+        }
+        .padding(.top, 4)
+    }
+
+    private func toolRow(
+        label: String,
+        tint: Color,
+        state: ToolRowState,
+        singular: String,
+        plural: String
+    ) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(tint)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 6)
+            toolRowTrailing(state: state, tint: tint, singular: singular, plural: plural)
+        }
+    }
+
+    @ViewBuilder
+    private func toolRowTrailing(
+        state: ToolRowState,
+        tint: Color,
+        singular: String,
+        plural: String
+    ) -> some View {
+        switch state {
+        case .notScanned:
+            Text("Run a scan")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(tint)
+        case .empty:
+            Text("Nothing found")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.tertiary)
+        case .data(let bytes, let count, _):
+            HStack(spacing: 4) {
+                Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                Text("· \(count) \(count == 1 ? singular : plural)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        case .stale(let bytes, _, let scannedAt):
+            HStack(spacing: 4) {
+                Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+                    .font(.caption.weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Text("· \(scannedAt.formatted(.relative(presentation: .named)))")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
@@ -203,26 +359,6 @@ struct HomeView: View {
         }
         .frame(height: 8)
         .clipShape(.capsule)
-    }
-
-    private func legend(segments: [ScanCache.ReclaimableSegment]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(segments, id: \.label) { segment in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(insightColor(for: segment.label))
-                        .frame(width: 7, height: 7)
-                    Text(segment.label)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 6)
-                    Text(ByteCountFormatter.string(fromByteCount: segment.bytes, countStyle: .file))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .monospacedDigit()
-                }
-            }
-        }
     }
 
     private func insightColor(for label: String) -> Color {
@@ -618,5 +754,28 @@ private struct ToolTile: View {
         case .stat:
             AnyShapeStyle(.secondary)
         }
+    }
+}
+
+// MARK: - Volume stats
+
+/// Tiny wrapper around `URLResourceValues` used by the home insight
+/// card to show the boot volume's used/free overview before the user
+/// has run any scan.
+private struct VolumeStats {
+    let totalBytes: Int64
+    let freeBytes: Int64
+    var usedBytes: Int64 { max(0, totalBytes - freeBytes) }
+
+    static func boot() -> VolumeStats? {
+        let url = URL(fileURLWithPath: "/")
+        guard let values = try? url.resourceValues(forKeys: [
+            .volumeTotalCapacityKey,
+            .volumeAvailableCapacityForImportantUsageKey,
+        ]) else { return nil }
+        let total = Int64(values.volumeTotalCapacity ?? 0)
+        let free = values.volumeAvailableCapacityForImportantUsage ?? 0
+        guard total > 0 else { return nil }
+        return VolumeStats(totalBytes: total, freeBytes: free)
     }
 }

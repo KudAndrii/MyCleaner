@@ -107,7 +107,10 @@ struct ScanCacheStoreValidateTests {
     }
 
     @Test
-    func clearsLargeFilesSnapshotWhenEverythingPruned() {
+    func keepsLargeFilesSnapshotEvenWhenEverythingPruned() {
+        // After pruning to empty, the snapshot survives (with no
+        // items) so the home insight can tell "scanned, nothing
+        // left" apart from "never scanned".
         let cache = ScanCache(
             largeFiles: LargeFilesSnapshot(
                 scannedAt: Date(),
@@ -115,7 +118,7 @@ struct ScanCacheStoreValidateTests {
             )
         )
         let pruned = ScanCacheStore.validate(cache) { _ in false }
-        #expect(pruned.largeFiles == nil)
+        #expect(pruned.largeFiles?.items.isEmpty == true)
     }
 
     @Test
@@ -165,8 +168,10 @@ struct ScanCacheStoreValidateTests {
         )
         // Group 1: only /a survives → drop the whole group (was 3 copies).
         // Group 2: /y survives → drop (singleton can't be a duplicate).
+        // Snapshot itself survives (with no groups) so the row can
+        // render the "Nothing left" state instead of "Run a scan".
         let pruned = ScanCacheStore.validate(cache) { $0 == "/a" || $0 == "/y" }
-        #expect(pruned.duplicates == nil)
+        #expect(pruned.duplicates?.groups.isEmpty == true)
     }
 
     @Test

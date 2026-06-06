@@ -938,6 +938,16 @@ final class CleanerModel {
         }
     }
 
+    /// Wipes every persisted scan snapshot and flips the home insight
+    /// card back to its storage-overview state. Triggered by the
+    /// "Clear" affordance in the insight card.
+    func clearScanCache() {
+        scanCache = .empty
+        Task.detached(priority: .background) {
+            ScanCacheStore.save(.empty)
+        }
+    }
+
     private func persistOrphanSnapshot() {
         scanCache.orphans = OrphansSnapshot(
             scannedAt: Date(),
