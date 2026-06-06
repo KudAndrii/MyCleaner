@@ -53,12 +53,22 @@ nonisolated struct AppEntryMatchContext: Sendable {
     /// `entry.deletingPathExtension().lastPathComponent.lowercased()`.
     let baseNameLower: String
 
+    /// `true` when this entry came from a vendor-folder descent rather
+    /// than a top-level Library directory walk.
+    ///
+    /// Tightens ``NameHintMatcher`` so a generic name hint like
+    /// "code" doesn't grab Chromium-style internals (`Code Cache`,
+    /// `Local Storage`, …) inside every other Electron app's
+    /// `Application Support/<app>/` folder.
+    let descended: Bool
+
     init(
         app: DroppedApp,
         teamID: String?,
         nameHints: [String],
         category: RelatedItem.Category,
-        entry: URL
+        entry: URL,
+        descended: Bool = false
     ) {
         self.app = app
         self.teamID = teamID
@@ -66,6 +76,7 @@ nonisolated struct AppEntryMatchContext: Sendable {
         self.category = category
         self.fullNameLower = entry.lastPathComponent.lowercased()
         self.baseNameLower = entry.deletingPathExtension().lastPathComponent.lowercased()
+        self.descended = descended
     }
 }
 
@@ -128,15 +139,26 @@ nonisolated struct ICloudBundleMatcher: AppEntryMatcher {
 /// but rejecting another letter immediately after.
 ///
 /// Catches folders like `Rider2024.3`, `Microsoft Word Data`, etc.
+///
+/// When the entry came from a vendor-folder descent (parent isn't
+/// a Library directory itself) the prefix check tightens: a space
+/// after the hint is no longer accepted as a word boundary. That
+/// stops a name hint like "code" from matching every Electron app's
+/// `Application Support/<vendor>/Code Cache` directory.
 nonisolated struct NameHintMatcher: AppEntryMatcher {
     func match(entry: URL, in context: AppEntryMatchContext) -> AppEntryMatch? {
         let full = context.fullNameLower
         let base = context.baseNameLower
+        let allowSpaceBoundary = !context.descended
 
         for hint in context.nameHints {
             if base == hint || full == hint { return AppEntryMatch(shared: false) }
-            if AppScanner.wordBoundaryPrefix(base, prefix: hint) { return AppEntryMatch(shared: false) }
-            if AppScanner.wordBoundaryPrefix(full, prefix: hint) { return AppEntryMatch(shared: false) }
+            if AppScanner.wordBoundaryPrefix(base, prefix: hint, allowSpaceBoundary: allowSpaceBoundary) {
+                return AppEntryMatch(shared: false)
+            }
+            if AppScanner.wordBoundaryPrefix(full, prefix: hint, allowSpaceBoundary: allowSpaceBoundary) {
+                return AppEntryMatch(shared: false)
+            }
         }
         return nil
     }

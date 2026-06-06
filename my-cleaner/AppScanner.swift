@@ -257,7 +257,8 @@ enum AppScanner {
         nameHints: [String],
         extraDepth: Int,
         appPath: String,
-        into found: inout [URL: RelatedItem]
+        into found: inout [URL: RelatedItem],
+        descended: Bool = false
     ) {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
@@ -276,7 +277,8 @@ enum AppScanner {
                 app: app,
                 teamID: teamID,
                 nameHints: nameHints,
-                category: category
+                category: category,
+                descended: descended
             )
             if outcome.matched {
                 if found[std] == nil {
@@ -304,7 +306,8 @@ enum AppScanner {
                     nameHints: nameHints,
                     extraDepth: extraDepth - 1,
                     appPath: appPath,
-                    into: &found
+                    into: &found,
+                    descended: true
                 )
             }
         }
@@ -337,14 +340,16 @@ enum AppScanner {
         app: DroppedApp,
         teamID: String?,
         nameHints: [String],
-        category: RelatedItem.Category
+        category: RelatedItem.Category,
+        descended: Bool = false
     ) -> (matched: Bool, shared: Bool) {
         let context = AppEntryMatchContext(
             app: app,
             teamID: teamID,
             nameHints: nameHints,
             category: category,
-            entry: entry
+            entry: entry,
+            descended: descended
         )
         for matcher in matchers() {
             if let result = matcher.match(entry: entry, in: context) {
@@ -390,10 +395,22 @@ enum AppScanner {
     /// "Microsoft Word Data". Returns `false` for prefixes shorter than
     /// 3 characters and for exact-equality (handled separately by the
     /// caller).
-    nonisolated static func wordBoundaryPrefix(_ s: String, prefix: String) -> Bool {
+    ///
+    /// When `allowSpaceBoundary` is `false`, whitespace after the
+    /// prefix no longer counts as a boundary. Used at descended
+    /// depths so a hint like "code" doesn't attach itself to
+    /// Chromium internals such as "Code Cache" or "Local Storage"
+    /// inside other Electron apps' data folders.
+    nonisolated static func wordBoundaryPrefix(
+        _ s: String,
+        prefix: String,
+        allowSpaceBoundary: Bool = true
+    ) -> Bool {
         guard prefix.count >= 3, s.count > prefix.count, s.hasPrefix(prefix) else { return false }
         let next = s[s.index(s.startIndex, offsetBy: prefix.count)]
-        return !next.isLetter
+        if next.isLetter { return false }
+        if !allowSpaceBoundary, next.isWhitespace { return false }
+        return true
     }
 
     // MARK: - Code signing
