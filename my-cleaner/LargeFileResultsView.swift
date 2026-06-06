@@ -35,17 +35,24 @@ struct LargeFileScanningView: View {
     }
 
     private var heading: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "scalemass")
-                .font(.system(size: 44, weight: .light))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            Text("Ranking the biggest files…")
-                .font(.title3.weight(.semibold))
-            Text("\(completedCount) of \(model.largeFileScanPhases.count) steps complete · \(totalCandidates) \(totalCandidates == 1 ? "candidate" : "candidates") so far")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+        VStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.orange.opacity(0.22))
+                Image(systemName: "scalemass")
+                    .font(.system(size: 36, weight: .regular))
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 76, height: 76)
+
+            VStack(spacing: 4) {
+                Text("Ranking the biggest files…")
+                    .font(.title3.weight(.semibold))
+                Text("\(completedCount) of \(model.largeFileScanPhases.count) steps complete · \(totalCandidates) \(totalCandidates == 1 ? "candidate" : "candidates") so far")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
         }
     }
 
@@ -59,7 +66,7 @@ struct LargeFileScanningView: View {
             }
         }
         .padding(.vertical, 4)
-        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
         .frame(maxWidth: 520)
         .frame(maxWidth: .infinity)
     }

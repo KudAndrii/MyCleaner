@@ -8,13 +8,19 @@ import AppKit
 
 struct OrphanScanningView: View {
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 72, weight: .light))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+        VStack(spacing: 20) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.indigo.opacity(0.22))
+                Image(systemName: "tray.2.fill")
+                    .font(.system(size: 36, weight: .regular))
+                    .foregroundStyle(.indigo)
+            }
+            .frame(width: 76, height: 76)
+
             ProgressView()
                 .controlSize(.large)
+
             VStack(spacing: 4) {
                 Text("Scanning for leftovers…")
                     .font(.title3.weight(.semibold))

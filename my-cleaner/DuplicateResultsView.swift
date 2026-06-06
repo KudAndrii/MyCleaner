@@ -40,17 +40,24 @@ struct DuplicateScanningView: View {
     }
 
     private var heading: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "doc.on.doc.fill")
-                .font(.system(size: 44, weight: .light))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-            Text("Looking for duplicate files…")
-                .font(.title3.weight(.semibold))
-            Text("\(completedCount) of \(model.duplicateScanPhases.count) steps complete")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+        VStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.purple.opacity(0.22))
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.system(size: 36, weight: .regular))
+                    .foregroundStyle(.purple)
+            }
+            .frame(width: 76, height: 76)
+
+            VStack(spacing: 4) {
+                Text("Looking for duplicate files…")
+                    .font(.title3.weight(.semibold))
+                Text("\(completedCount) of \(model.duplicateScanPhases.count) steps complete")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
         }
     }
 
@@ -64,7 +71,7 @@ struct DuplicateScanningView: View {
             }
         }
         .padding(.vertical, 4)
-        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
         .frame(maxWidth: 520)
         .frame(maxWidth: .infinity)
     }
