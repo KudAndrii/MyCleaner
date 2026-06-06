@@ -89,6 +89,40 @@ nonisolated struct HomeStat: Equatable, Sendable {
 }
 
 extension ScanCache {
+    /// One slice of the home-screen "Reclaimable space" stacked bar.
+    /// Lives on the model side so the view layer doesn't have to walk
+    /// every snapshot to build the breakdown.
+    struct ReclaimableSegment: Equatable, Sendable {
+        /// Stable identifier — also the legend label.
+        let label: String
+        let bytes: Int64
+    }
+
+    /// Per-tool breakdown of recoverable space, in the order the
+    /// view should render them. Tools with no surviving cache are
+    /// dropped so an empty list signals "no scans yet".
+    var reclaimableSegments: [ReclaimableSegment] {
+        var segments: [ReclaimableSegment] = []
+        if let stat = orphanStat {
+            segments.append(.init(label: "App leftovers", bytes: stat.totalBytes))
+        }
+        if let stat = largeFileStat {
+            segments.append(.init(label: "Large files", bytes: stat.totalBytes))
+        }
+        if let stat = oversizedCacheStat {
+            segments.append(.init(label: "Oversized caches", bytes: stat.totalBytes))
+        }
+        if let stat = duplicateStat {
+            segments.append(.init(label: "Duplicate files", bytes: stat.totalBytes))
+        }
+        return segments
+    }
+
+    /// Sum of every surviving tool's recoverable bytes.
+    var reclaimableTotal: Int64 {
+        reclaimableSegments.map(\.bytes).reduce(0, +)
+    }
+
     /// `nil` when the orphan scan has never been run (or every group
     /// has been pruned).
     var orphanStat: HomeStat? {

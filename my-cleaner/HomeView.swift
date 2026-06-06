@@ -25,7 +25,7 @@ struct HomeView: View {
                 if permissions.needsAttention {
                     permissionsBanner
                 }
-                dropZoneCard
+                heroRow
                 toolsSection
             }
             .frame(maxWidth: 1100)
@@ -49,6 +49,24 @@ struct HomeView: View {
                 Task { await model.startDuplicateScan(scope: urls, minimumBytes: minimumBytes) }
             }
         }
+    }
+
+    // MARK: - Hero row (drop zone + insight)
+
+    /// Top section of the home screen. The two cards always sit
+    /// side-by-side, even at the minimum window width — the insight
+    /// card is capped so the drop zone keeps the bulk of the row.
+    /// `Grid` keeps both cells the same height (matched to the taller
+    /// of the two) so the cards line up visually.
+    private var heroRow: some View {
+        Grid(alignment: .top, horizontalSpacing: 16, verticalSpacing: 0) {
+            GridRow {
+                dropZoneCard
+                insightCard
+                    .frame(minWidth: 220, idealWidth: 320, maxWidth: 340)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Drop zone
@@ -88,7 +106,7 @@ struct HomeView: View {
             }
         }
         .padding(36)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(
@@ -106,6 +124,114 @@ struct HomeView: View {
             handleDrop(urls)
         } isTargeted: { hovering in
             model.isHovering = hovering
+        }
+    }
+
+    // MARK: - Reclaimable Space insight
+
+    /// Companion to the drop zone. Aggregates whatever survives in the
+    /// scan cache into a single "reclaimable" headline + stacked bar +
+    /// legend. Stays empty-stated until the user has actually run a
+    /// scan — we never claim a number we didn't measure.
+    private var insightCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("RECLAIMABLE SPACE")
+                    .font(.caption.weight(.semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+            }
+
+            let segments = model.scanCache.reclaimableSegments
+            if segments.isEmpty {
+                insightEmptyState
+            } else {
+                insightPopulated(segments: segments)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
+    }
+
+    private var insightEmptyState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Nothing measured yet")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.primary)
+            Text("Run any tool below and we'll start tracking how much space you can win back.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func insightPopulated(segments: [ScanCache.ReclaimableSegment]) -> some View {
+        let total = segments.map(\.bytes).reduce(0, +)
+        let totalString = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(totalString)
+                    .font(.system(size: 36, weight: .bold))
+                Text("reclaimable")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("across \(segments.count) \(segments.count == 1 ? "category" : "categories") on this Mac")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            stackedBar(segments: segments, total: total)
+            legend(segments: segments)
+        }
+    }
+
+    private func stackedBar(segments: [ScanCache.ReclaimableSegment], total: Int64) -> some View {
+        GeometryReader { geo in
+            HStack(spacing: 2) {
+                ForEach(segments, id: \.label) { segment in
+                    let fraction = total > 0 ? CGFloat(segment.bytes) / CGFloat(total) : 0
+                    Rectangle()
+                        .fill(insightColor(for: segment.label))
+                        .frame(width: max(4, geo.size.width * fraction))
+                }
+            }
+        }
+        .frame(height: 8)
+        .clipShape(.capsule)
+    }
+
+    private func legend(segments: [ScanCache.ReclaimableSegment]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(segments, id: \.label) { segment in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(insightColor(for: segment.label))
+                        .frame(width: 7, height: 7)
+                    Text(segment.label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 6)
+                    Text(ByteCountFormatter.string(fromByteCount: segment.bytes, countStyle: .file))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .monospacedDigit()
+                }
+            }
+        }
+    }
+
+    private func insightColor(for label: String) -> Color {
+        switch label {
+        case "App leftovers": .indigo
+        case "Large files": .orange
+        case "Oversized caches": .teal
+        case "Duplicate files": .purple
+        default: .gray
         }
     }
 
