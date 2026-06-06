@@ -33,7 +33,10 @@ struct HomeView: View {
             .padding(24)
         }
         .safeAreaInset(edge: .bottom) { footerBar }
-        .onAppear { permissions.refresh() }
+        .onAppear {
+            permissions.refresh()
+            model.refreshHomeStats()
+        }
         .sheet(isPresented: $showLargeFileScope) {
             LargeFileScopeView(model: model, isPresented: $showLargeFileScope)
         }
@@ -146,7 +149,12 @@ struct HomeView: View {
             description: "Support files whose owning app is already gone.",
             systemImage: "tray.2",
             tint: .indigo,
-            stat: "Run scan"
+            footer: footer(
+                stat: model.scanCache.orphanStat,
+                singular: "bundle",
+                plural: "bundles",
+                callToAction: "Hunt for leftovers"
+            )
         ) {
             Task { await model.startOrphanScan() }
         }
@@ -155,7 +163,12 @@ struct HomeView: View {
             description: "Surface the biggest files across your home folder.",
             systemImage: "scalemass",
             tint: .orange,
-            stat: "Run scan"
+            footer: footer(
+                stat: model.scanCache.largeFileStat,
+                singular: "file",
+                plural: "files",
+                callToAction: "Spot the giants"
+            )
         ) {
             showLargeFileScope = true
         }
@@ -164,7 +177,12 @@ struct HomeView: View {
             description: "Dev tool caches, simulators and build artifacts.",
             systemImage: "externaldrive.badge.minus",
             tint: .teal,
-            stat: "Run scan"
+            footer: footer(
+                stat: model.scanCache.oversizedCacheStat,
+                singular: "place",
+                plural: "places",
+                callToAction: "Reclaim cache space"
+            )
         ) {
             model.startCacheScan()
         }
@@ -173,10 +191,36 @@ struct HomeView: View {
             description: "Byte-identical copies hiding across your disk.",
             systemImage: "doc.on.doc",
             tint: .purple,
-            stat: "Run scan"
+            footer: footer(
+                stat: model.scanCache.duplicateStat,
+                singular: "dupe",
+                plural: "dupes",
+                callToAction: "Find duplicates"
+            )
         ) {
             showDuplicateOptions = true
         }
+    }
+
+    /// Builds the inline footer for a tool tile.
+    ///
+    /// Pre-scan: a tile-specific invitation, drawn in the accent
+    /// colour so it reads as the active call-to-action. Post-scan:
+    /// the headline stat in muted text — the user already knows the
+    /// tool works.
+    private func footer(
+        stat: HomeStat?,
+        singular: String,
+        plural: String,
+        callToAction: String
+    ) -> ToolTileFooter {
+        guard let stat else { return .callToAction(callToAction) }
+        let unit = stat.count == 1 ? singular : plural
+        let bytes = ByteCountFormatter.string(
+            fromByteCount: stat.totalBytes,
+            countStyle: .file
+        )
+        return .stat("\(bytes) · \(stat.count) \(unit)")
     }
 
     // MARK: - Footer
@@ -318,15 +362,24 @@ struct HomeView: View {
 
 // MARK: - Tool tile
 
+/// Footer text for ``ToolTile``. Splits the pre-scan call-to-action
+/// from the post-scan numeric stat so the tile can render the former
+/// in the accent colour (active invitation) and the latter in muted
+/// secondary text (informational).
+private enum ToolTileFooter {
+    case callToAction(String)
+    case stat(String)
+}
+
 /// Single tile in the home screen's `Cleanup tools` grid. Stays purely
-/// presentational — the tap action and `stat` string are passed in from
+/// presentational — the tap action and footer text are passed in from
 /// `HomeView` so this view doesn't reach into the cleaner model.
 private struct ToolTile: View {
     let title: String
     let description: String
     let systemImage: String
     let tint: Color
-    let stat: String
+    let footer: ToolTileFooter
     let action: () -> Void
 
     var body: some View {
@@ -351,14 +404,12 @@ private struct ToolTile: View {
                         .multilineTextAlignment(.leading)
                 }
 
-                HStack {
-                    Text(stat)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.tertiary)
-                    Spacer()
+                HStack(spacing: 6) {
+                    footerText
+                    Spacer(minLength: 4)
                     Image(systemName: "arrow.right")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(footerArrowStyle)
                 }
             }
             .padding(16)
@@ -367,5 +418,28 @@ private struct ToolTile: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var footerText: some View {
+        switch footer {
+        case .callToAction(let text):
+            Text(text)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+        case .stat(let text):
+            Text(text)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var footerArrowStyle: AnyShapeStyle {
+        switch footer {
+        case .callToAction:
+            AnyShapeStyle(tint)
+        case .stat:
+            AnyShapeStyle(.secondary)
+        }
     }
 }

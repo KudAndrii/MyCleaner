@@ -195,7 +195,7 @@ enum LargeFileScanner {
         // gigabytes before the function returns.
         for case let url as URL in enumerator {
             try Task.checkCancellation()
-            try autoreleasepool {
+            autoreleasepool {
                 let std = url.standardizedFileURL
                 let entryIsDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 if entryIsDir {

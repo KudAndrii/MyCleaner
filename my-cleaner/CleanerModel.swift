@@ -116,10 +116,20 @@ final class CleanerModel {
     var errorMessage: String?
     var isHovering: Bool = false
 
+    /// Persisted per-tool snapshot of the most recent scan. Loaded
+    /// from disk on init, re-validated against the live filesystem
+    /// every time the home screen appears, and updated whenever a
+    /// scan completes.
+    var scanCache: ScanCache = .empty
+
     /// Cancellation handle for the in-flight duplicate scan, if any.
     /// Stored so the UI can call ``cancelDuplicateScan()`` from the
     /// scanning view without coordinating Task identity through state.
     private var duplicateScanTask: Task<[DuplicateGroup], Error>?
+
+    init() {
+        scanCache = ScanCacheStore.load()
+    }
 
     // MARK: - Login items (opt-in)
 
@@ -361,6 +371,7 @@ final class CleanerModel {
         }.value
 
         orphanGroups = result.groups
+        persistOrphanSnapshot()
         stage = .orphanResults
     }
 
@@ -475,6 +486,7 @@ final class CleanerModel {
                 }.value
                 try Task.checkCancellation()
                 self.largeFiles = scanned
+                self.persistLargeFileSnapshot()
                 self.stage = .largeFileResults
                 self.largeFileScanTask = nil
             } catch is CancellationError {
@@ -603,6 +615,7 @@ final class CleanerModel {
                 }.value
                 try Task.checkCancellation()
                 self.cacheGroups = result.groups
+                self.persistOversizedCacheSnapshot()
                 self.stage = .cacheResults
                 self.cacheScanTask = nil
             } catch is CancellationError {
@@ -746,6 +759,7 @@ final class CleanerModel {
             let groups = try await task.value
             guard duplicateScanTask == task else { return }
             duplicateGroups = groups
+            persistDuplicateSnapshot()
             stage = .duplicateResults
         } catch is CancellationError {
             if stage == .duplicateScanning { stage = .idle }
@@ -900,6 +914,90 @@ final class CleanerModel {
             trashedWithElevation: elevatedSucceeded,
             failures: failures
         )
+    }
+
+    // MARK: - Home-screen cache hooks
+
+    /// Re-validates the persisted scan cache against the live
+    /// filesystem and updates ``scanCache`` if anything changed.
+    ///
+    /// Called by the home view on appear; fire-and-forget. Items the
+    /// user has trashed since the last scan get pruned here, so the
+    /// home tiles never advertise totals that no longer exist on disk.
+    func refreshHomeStats() {
+        let current = scanCache
+        Task { [weak self] in
+            let pruned = await Task.detached(priority: .userInitiated) {
+                ScanCacheStore.validate(current)
+            }.value
+            guard pruned != current else { return }
+            await Task.detached(priority: .background) {
+                ScanCacheStore.save(pruned)
+            }.value
+            self?.scanCache = pruned
+        }
+    }
+
+    private func persistOrphanSnapshot() {
+        scanCache.orphans = OrphansSnapshot(
+            scannedAt: Date(),
+            groups: orphanGroups.map { group in
+                OrphansSnapshot.Group(
+                    bundleID: group.bundleID,
+                    items: group.items.map {
+                        OrphansSnapshot.Item(path: $0.url.path, sizeBytes: $0.sizeBytes)
+                    }
+                )
+            }
+        )
+        persistScanCacheAsync()
+    }
+
+    private func persistLargeFileSnapshot() {
+        scanCache.largeFiles = LargeFilesSnapshot(
+            scannedAt: Date(),
+            items: largeFiles.map {
+                LargeFilesSnapshot.Item(path: $0.url.path, sizeBytes: $0.sizeBytes)
+            }
+        )
+        persistScanCacheAsync()
+    }
+
+    private func persistOversizedCacheSnapshot() {
+        scanCache.oversizedCaches = OversizedCachesSnapshot(
+            scannedAt: Date(),
+            groups: cacheGroups.map { group in
+                OversizedCachesSnapshot.Group(
+                    id: group.id,
+                    entries: group.entries.map {
+                        OversizedCachesSnapshot.Entry(path: $0.url.path, sizeBytes: $0.sizeBytes)
+                    }
+                )
+            }
+        )
+        persistScanCacheAsync()
+    }
+
+    private func persistDuplicateSnapshot() {
+        scanCache.duplicates = DuplicatesSnapshot(
+            scannedAt: Date(),
+            groups: duplicateGroups.map { group in
+                DuplicatesSnapshot.Group(
+                    sizePerCopy: group.sizePerCopy,
+                    paths: group.copies.map(\.url.path)
+                )
+            }
+        )
+        persistScanCacheAsync()
+    }
+
+    /// Non-blocking write to disk. Captures the current cache by value
+    /// so the detached task is `Sendable`-clean.
+    private func persistScanCacheAsync() {
+        let snapshot = scanCache
+        Task.detached(priority: .background) {
+            ScanCacheStore.save(snapshot)
+        }
     }
 }
 
