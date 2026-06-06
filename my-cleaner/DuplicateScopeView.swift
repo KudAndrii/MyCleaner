@@ -36,10 +36,15 @@ struct DuplicateScopeView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Image(systemName: "doc.on.doc.fill")
-                .font(.system(size: 36))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.purple.opacity(0.22))
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.title2)
+                    .foregroundStyle(.purple)
+            }
+            .frame(width: 48, height: 48)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text("Find duplicate files")
                     .font(.title2.weight(.semibold))
@@ -157,7 +162,7 @@ struct DuplicateScopeView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.background.secondary, in: .rect(cornerRadius: 10))
+        .glassEffect(.regular, in: .rect(cornerRadius: 10))
         .opacity(exists ? 1 : 0.55)
     }
 

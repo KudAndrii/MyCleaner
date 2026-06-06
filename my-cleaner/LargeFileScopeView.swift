@@ -41,17 +41,23 @@ struct LargeFileScopeView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "scalemass")
-                .font(.system(size: 32))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.orange.opacity(0.22))
+                Image(systemName: "scalemass")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+            }
+            .frame(width: 48, height: 48)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text("Find large files")
                     .font(.title2.weight(.semibold))
                 Text("Pick the size floor and where to look. Spotlight always covers your home folder.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

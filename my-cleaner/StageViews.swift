@@ -9,8 +9,18 @@ import AppKit
 struct CleaningView: View {
     var body: some View {
         VStack(spacing: 20) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.red.opacity(0.18))
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 32, weight: .regular))
+                    .foregroundStyle(.red)
+            }
+            .frame(width: 76, height: 76)
+
             ProgressView()
                 .controlSize(.large)
+
             Text("Moving items to the Trash…")
                 .font(.title3.weight(.semibold))
         }
@@ -116,7 +126,7 @@ struct DoneView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(.background.secondary, in: .rect(cornerRadius: 10))
+                    .glassEffect(.regular, in: .rect(cornerRadius: 10))
                     .help(failure.url.path)
                 }
             }
